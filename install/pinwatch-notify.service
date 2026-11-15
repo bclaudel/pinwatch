@@ -1,0 +1,17 @@
+[Unit]
+Description=Pinwatch desktop notification companion
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pinwatch notify
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+# Runs as the desktop user with their existing D-Bus session; no GPU permissions.
+
+[Install]
+WantedBy=graphical-session.target

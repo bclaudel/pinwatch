@@ -1,0 +1,23 @@
+[package]
+name = "pinwatch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "Linux ASUS Astral GPU connector telemetry and optional protection"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+fs2 = "0.4"
+i2cdev = "0.6.2"
+nvml-wrapper = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+toml = "0.8"
+uuid = { version = "1.22", features = ["v4"] }
+zbus = { version = "5.17", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tempfile = "3"

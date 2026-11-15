@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+printf '%s\n' 'Running pinned, locked cargo tests before push...'
+exec nix develop --command cargo test --locked

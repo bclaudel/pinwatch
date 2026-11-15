@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "kind": "telemetry",
+  "daemon_instance": "direct-read-only",
+  "emitted_at_unix_ms": 0,
+  "max_sample_age_ms": 5000,
+  "gpus": [
+    {
+      "device": {
+        "gpu_uuid": "GPU-SIMULATED-ASTRAL",
+        "index": 0,
+        "pci_address": "0000:01:00.0",
+        "model": "SIMULATED ROG-ASTRAL-RTX5090-O32G",
+        "sensor_supported": true,
+        "i2c_adapters": [
+          1
+        ],
+        "selected_adapter": 1,
+        "sensor_error": null,
+        "capabilities": {
+          "power_min_w": 400.0,
+          "power_max_w": 600.0,
+          "graphics_min_mhz": 210,
+          "memory_min_mhz": 405,
+          "control_status": "simulated",
+          "errors": []
+        }
+      },
+      "reading": {
+        "sample_sequence": 1,
+        "sampled_at_unix_ms": 0,
+        "sample_duration_ms": 0,
+        "channels": [
+          {
+            "channel_id": 1,
+            "voltage_v": 12.0,
+            "current_a": 7.686,
+            "power_w": 92.232
+          },
+          {
+            "channel_id": 2,
+            "voltage_v": 12.0,
+            "current_a": 7.653,
+            "power_w": 91.836
+          },
+          {
+            "channel_id": 3,
+            "voltage_v": 12.0,
+            "current_a": 7.506,
+            "power_w": 90.072
+          },
+          {
+            "channel_id": 4,
+            "voltage_v": 12.0,
+            "current_a": 7.328,
+            "power_w": 87.936
+          },
+          {
+            "channel_id": 5,
+            "voltage_v": 12.0,
+            "current_a": 7.415,
+            "power_w": 88.98
+          },
+          {
+            "channel_id": 6,
+            "voltage_v": 12.0,
+            "current_a": 7.189,
+            "power_w": 86.268
+          }
+        ],
+        "connector_total_w": 537.3240000000001,
+        "nvml_board_power_w": 532.85,
+        "power_limit_w": 600.0,
+        "power_balance_ratio": 0.9353369763205829,
+        "current_balance_ratio": 0.9353369763205829,
+        "sensor_errors": [],
+        "nvml_errors": []
+      },
+      "sample_age_ms": 0,
+      "freshness": "fresh",
+      "protection": {
+        "mode": "monitor",
+        "state": "monitoring",
+        "effective": false,
+        "reason": "direct read-only access; no active protection",
+        "last_action": null,
+        "last_outcome": null,
+        "historical_restriction": null
+      }
+    }
+  ],
+  "recent_events": []
+}

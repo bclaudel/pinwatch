@@ -1,0 +1,51 @@
+[Unit]
+Description=Pinwatch GPU connector monitoring and optional protection
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+User=root
+Group=pinwatch
+ExecStart=/usr/local/bin/pinwatchd --config /etc/pinwatch/pinwatch.toml
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+RuntimeDirectory=pinwatch
+RuntimeDirectoryMode=0750
+# Keep ownership-lock inodes across service stops, including direct monitoring.
+RuntimeDirectoryPreserve=yes
+StateDirectory=pinwatch
+StateDirectoryMode=0700
+UMask=0027
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pinwatchd
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+PrivateTmp=yes
+PrivateDevices=no
+PrivateUsers=no
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+# NVML/I2C use ioctl on host devices. No broad ioctl/privileged syscall denial.
+DevicePolicy=closed
+DeviceAllow=char-i2c rw
+DeviceAllow=char-nvidia rw
+# Verify these names in /proc/devices on the deployment host; see README.
+
+[Install]
+WantedBy=multi-user.target

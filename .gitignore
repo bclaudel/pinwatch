@@ -1,0 +1,8 @@
+/target/
+/.direnv/
+/test-output/
+*.sock
+*.lock.tmp
+*.jsonl
+!fixtures/*.jsonl
+/runtime/

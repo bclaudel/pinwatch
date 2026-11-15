@@ -1,0 +1,10 @@
+GPU-SIMULATED-ASTRAL  0000:01:00.0  SIMULATED ROG-ASTRAL-RTX5090-O32G
+  fresh (age 0 ms) | protection: monitoring — direct read-only access; no active protection
+  board: 532.85 W | connector: 537.32 W | cap: 600.00 W
+  channel 1: 12.00 V   7.69 A   92.23 W
+  channel 2: 12.00 V   7.65 A   91.84 W
+  channel 3: 12.00 V   7.51 A   90.07 W
+  channel 4: 12.00 V   7.33 A   87.94 W
+  channel 5: 12.00 V   7.42 A   88.98 W
+  channel 6: 12.00 V   7.19 A   86.27 W
+  power min/max: 0.94 | current min/max: 0.94

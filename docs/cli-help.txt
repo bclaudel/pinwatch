@@ -1,0 +1,109 @@
+$ pinwatch --help
+
+ASUS Astral GPU connector telemetry; read-only CLI and desktop companion
+
+Usage: pinwatch [OPTIONS] <COMMAND>
+
+Commands:
+  devices  Enumerate GPU identities, sensor support, adapters, and queryable control ranges
+  status   One cached snapshot; no I2C polling unless --direct was explicitly specified
+  watch    Continuous readings. --json emits flushed NDJSON, no ANSI or stdout diagnostics
+  notify   Relay read-only daemon events to the desktop session's standard D-Bus notifier
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --socket <SOCKET>              [default: /run/pinwatch/pinwatch.sock]
+      --uuid <UUID>
+      --index <INDEX>
+      --direct                       Explicit read-only hardware access. Requires exclusive per-GPU ownership
+      --simulate <SIMULATE>          Replay fixture instead of hardware (requires --direct)
+      --adapter <ADAPTER>            Explicit PCI-local adapter (requires --direct and a single selected GPU)
+      --lock-dir <LOCK_DIR>          [default: /run/pinwatch]
+      --nvml-library <NVML_LIBRARY>
+  -h, --help                         Print help
+  -V, --version                      Print version
+
+$ pinwatch devices --help
+
+Enumerate GPU identities, sensor support, adapters, and queryable control ranges
+
+Usage: pinwatch devices [OPTIONS]
+
+Options:
+      --json
+      --socket <SOCKET>              [default: /run/pinwatch/pinwatch.sock]
+      --uuid <UUID>
+      --index <INDEX>
+      --direct                       Explicit read-only hardware access. Requires exclusive per-GPU ownership
+      --simulate <SIMULATE>          Replay fixture instead of hardware (requires --direct)
+      --adapter <ADAPTER>            Explicit PCI-local adapter (requires --direct and a single selected GPU)
+      --lock-dir <LOCK_DIR>          [default: /run/pinwatch]
+      --nvml-library <NVML_LIBRARY>
+  -h, --help                         Print help
+
+$ pinwatch status --help
+
+One cached snapshot; no I2C polling unless --direct was explicitly specified
+
+Usage: pinwatch status [OPTIONS]
+
+Options:
+      --json
+      --socket <SOCKET>              [default: /run/pinwatch/pinwatch.sock]
+      --uuid <UUID>
+      --index <INDEX>
+      --direct                       Explicit read-only hardware access. Requires exclusive per-GPU ownership
+      --simulate <SIMULATE>          Replay fixture instead of hardware (requires --direct)
+      --adapter <ADAPTER>            Explicit PCI-local adapter (requires --direct and a single selected GPU)
+      --lock-dir <LOCK_DIR>          [default: /run/pinwatch]
+      --nvml-library <NVML_LIBRARY>
+  -h, --help                         Print help
+
+$ pinwatch watch --help
+
+Continuous readings. --json emits flushed NDJSON, no ANSI or stdout diagnostics
+
+Usage: pinwatch watch [OPTIONS]
+
+Options:
+      --json
+      --socket <SOCKET>              [default: /run/pinwatch/pinwatch.sock]
+      --uuid <UUID>
+      --index <INDEX>
+      --direct                       Explicit read-only hardware access. Requires exclusive per-GPU ownership
+      --simulate <SIMULATE>          Replay fixture instead of hardware (requires --direct)
+      --adapter <ADAPTER>            Explicit PCI-local adapter (requires --direct and a single selected GPU)
+      --lock-dir <LOCK_DIR>          [default: /run/pinwatch]
+      --nvml-library <NVML_LIBRARY>
+  -h, --help                         Print help
+
+$ pinwatch notify --help
+
+Relay read-only daemon events to the desktop session's standard D-Bus notifier
+
+Usage: pinwatch notify [OPTIONS]
+
+Options:
+      --socket <SOCKET>              [default: /run/pinwatch/pinwatch.sock]
+      --test                         EXPLICIT SYNTHETIC TEST: send one real desktop popup, without touching a GPU
+      --uuid <UUID>
+      --index <INDEX>
+      --direct                       Explicit read-only hardware access. Requires exclusive per-GPU ownership
+      --simulate <SIMULATE>          Replay fixture instead of hardware (requires --direct)
+      --adapter <ADAPTER>            Explicit PCI-local adapter (requires --direct and a single selected GPU)
+      --lock-dir <LOCK_DIR>          [default: /run/pinwatch]
+      --nvml-library <NVML_LIBRARY>
+  -h, --help                         Print help
+
+$ pinwatchd --help
+
+GPU connector polling daemon; monitor-only unless explicitly configured active
+
+Usage: pinwatchd [OPTIONS]
+
+Options:
+      --config <CONFIG>
+      --monitor-only     Force read-only monitoring, overriding the configuration
+      --dry-run          Propose interventions but never change GPU controls
+  -h, --help             Print help
+  -V, --version          Print version

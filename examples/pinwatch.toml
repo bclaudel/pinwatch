@@ -1,0 +1,19 @@
+# Start read-only. "dry_run" emits proposals; only "active" writes GPU controls.
+mode = "monitor"
+threshold_a = 8.5
+poll_interval_ms = 2000
+max_sample_age_ms = 5000
+headroom_fraction = 0.02
+settle_ms = 4000
+socket = "/run/pinwatch/pinwatch.sock"
+lock_dir = "/run/pinwatch"
+state_file = "/var/lib/pinwatch/history.json"
+# Optional restriction to one stable identity. Omit to monitor all supported GPUs.
+# gpu_uuid = "GPU-your-uuid"
+# Optional trusted, absolute NVML path. Normally the Arch fallback works automatically.
+# nvml_library = "/usr/lib/libnvidia-ml.so.1"
+
+# Populate using `pinwatch --direct devices`; never guess from an NVML index.
+# With several PCI-local adapters, Pinwatch refuses to choose silently.
+[adapters]
+# "GPU-your-uuid" = 1

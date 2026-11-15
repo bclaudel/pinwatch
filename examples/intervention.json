@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "daemon_instance": "EXAMPLE-DAEMON",
+  "sequence": 3,
+  "event_id": "EXAMPLE-DAEMON:3",
+  "incident_id": "EXAMPLE-INCIDENT",
+  "timestamp_unix_ms": 0,
+  "gpu_uuid": "GPU-SIMULATED-ASTRAL",
+  "kind": "action_applied",
+  "simulation": true,
+  "channel_id": 2,
+  "current_a": 9.1,
+  "threshold_a": 8.5,
+  "previous_power_cap_w": 600.0,
+  "action": {
+    "kind": "power_limit",
+    "target_w": 494.307
+  },
+  "outcome": {
+    "power_limit_w": 494.307,
+    "graphics_locked": false,
+    "memory_locked": false,
+    "errors": []
+  },
+  "detail": "driver confirmed control; restrictions retained"
+}
