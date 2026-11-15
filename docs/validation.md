@@ -83,3 +83,13 @@ Arch/driver ABI combinations or the installed service's sandbox will work.
   make hardware access hard-real-time. Concurrent external GPU control tools are
   not coordinated by NVML's non-atomic cap API. See the policy document for these
   limits and the historical-state versus current-hardware distinction.
+
+## Direct-mode configuration follow-up
+
+After adding automatic `/etc/pinwatch/pinwatch.toml` loading and explicit
+`--config` support to direct mode, the pinned format, Clippy, test and release
+build sequence passed again: **45 tests**. New tests verify configured GPU
+selection, CLI UUID/index overrides, invalid adapter rejection, read-only mode
+with an active configuration, absent default fallback, and explicit missing or
+invalid configuration errors. CLI help was regenerated from the release binaries.
+No real hardware read or system binary installation was performed for this change.

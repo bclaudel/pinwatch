@@ -427,3 +427,23 @@ fn documented_examples_obey_v1_schema() {
     config.validate().unwrap();
     assert_eq!(config.mode, Mode::Monitor);
 }
+
+#[test]
+fn optional_config_only_falls_back_when_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pinwatch.toml");
+    assert_eq!(Config::read_optional(&path).unwrap().mode, Mode::Monitor);
+    std::fs::write(&path, "unknown = true").unwrap();
+    assert!(Config::read_optional(&path).is_err());
+    std::fs::write(
+        &path,
+        "gpu_uuid = 'GPU-configured'\n[adapters]\nGPU-configured = 3\n",
+    )
+    .unwrap();
+    let config = Config::read_optional(&path).unwrap();
+    assert_eq!(config.gpu_uuid.as_deref(), Some("GPU-configured"));
+    assert_eq!(config.adapters["GPU-configured"], 3);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(Config::read_optional(&path).is_err());
+}

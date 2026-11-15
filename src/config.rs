@@ -48,6 +48,18 @@ impl Default for Config {
     }
 }
 impl Config {
+    /// Only an absent default file falls back to defaults; unreadable/invalid files are errors.
+    pub fn read_optional(path: &std::path::Path) -> Result<Self> {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let config: Self = toml::from_str(&text)?;
+                config.validate()?;
+                Ok(config)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.threshold_a.is_finite() && self.threshold_a > 0.0 && self.threshold_a <= 9.2,

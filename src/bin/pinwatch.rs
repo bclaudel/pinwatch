@@ -19,6 +19,9 @@ use std::{
     about = "ASUS Astral GPU connector telemetry; read-only CLI and desktop companion"
 )]
 struct Args {
+    /// Direct-mode configuration; otherwise use /etc/pinwatch/pinwatch.toml if present.
+    #[arg(long, global = true, requires = "direct")]
+    config: Option<PathBuf>,
     #[arg(long, global = true, default_value = "/run/pinwatch/pinwatch.sock")]
     socket: PathBuf,
     #[arg(long, global = true, conflicts_with = "index")]
@@ -34,8 +37,8 @@ struct Args {
     /// Explicit PCI-local adapter (requires --direct and a single selected GPU).
     #[arg(long, global = true, requires = "direct")]
     adapter: Option<u32>,
-    #[arg(long, global = true, default_value = "/run/pinwatch")]
-    lock_dir: PathBuf,
+    #[arg(long, global = true)]
+    lock_dir: Option<PathBuf>,
     #[arg(long, global = true)]
     nvml_library: Option<PathBuf>,
     #[command(subcommand)]
@@ -194,19 +197,22 @@ async fn run(args: Args) -> Result<()> {
             }
         }
     }
-    let mut config = Config {
-        simulate: args.simulate.clone(),
-        nvml_library: args.nvml_library.clone(),
-        ..Default::default()
-    };
+    let mut config = direct_config(&args)?;
     if config.simulate.is_none() {
         ensure!(
-            args.lock_dir == std::path::Path::new("/run/pinwatch"),
+            config.lock_dir == std::path::Path::new("/run/pinwatch"),
             "real hardware always uses /run/pinwatch ownership locks"
         );
     }
     let mut backend = backend::open(&config)?;
-    let mut devices = backend::select(&backend.devices()?, args.uuid.as_deref(), args.index)?;
+    let uuid = args.uuid.as_deref().or_else(|| {
+        if args.index.is_none() {
+            config.gpu_uuid.as_deref()
+        } else {
+            None
+        }
+    });
+    let mut devices = backend::select(&backend.devices()?, uuid, args.index)?;
     if let Some(adapter) = args.adapter {
         ensure!(
             devices.len() == 1,
@@ -222,7 +228,7 @@ async fn run(args: Args) -> Result<()> {
     }
     let _locks = devices
         .iter()
-        .map(|d| ipc::Ownership::acquire(&args.lock_dir, &d.gpu_uuid))
+        .map(|d| ipc::Ownership::acquire(&config.lock_dir, &d.gpu_uuid))
         .collect::<Result<Vec<_>>>()?;
     let mut sequence = 0;
     loop {
@@ -269,6 +275,30 @@ async fn run(args: Args) -> Result<()> {
         }
         tokio::time::sleep(Duration::from_millis(config.poll_interval_ms)).await;
     }
+}
+fn direct_config(args: &Args) -> Result<Config> {
+    let mut config = if let Some(path) = &args.config {
+        Config::read(path)
+            .with_context(|| format!("read direct configuration {}", path.display()))?
+    } else if args.simulate.is_some() {
+        // Explicit fixture runs are independent of the installed hardware configuration.
+        Config::default()
+    } else {
+        Config::read_optional(std::path::Path::new("/etc/pinwatch/pinwatch.toml"))?
+    };
+    // Direct access is always read-only, even when the daemon configuration is active.
+    config.mode = Mode::Monitor;
+    if let Some(path) = &args.simulate {
+        config.simulate = Some(path.clone());
+    }
+    if let Some(path) = &args.nvml_library {
+        config.nvml_library = Some(path.clone());
+    }
+    if let Some(path) = &args.lock_dir {
+        config.lock_dir = path.clone();
+    }
+    config.validate()?;
+    Ok(config)
 }
 #[tokio::main]
 async fn main() -> Result<()> {

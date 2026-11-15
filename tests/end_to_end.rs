@@ -192,3 +192,52 @@ fn direct_simulation_devices_and_help() {
         assert!(output.status.success());
     }
 }
+
+#[test]
+fn direct_reads_config_and_cli_selection_overrides_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pinwatch.toml");
+    let mut config = Config {
+        mode: Mode::Active,
+        gpu_uuid: Some("GPU-SIMULATED-ASTRAL".into()),
+        simulate: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/overload.json")),
+        lock_dir: dir.path().into(),
+        ..Default::default()
+    };
+    config.adapters.insert("GPU-SIMULATED-ASTRAL".into(), 1);
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_pinwatch"))
+            .args(["--direct", "--config"])
+            .arg(&path)
+            .args(extra)
+            .args(["status", "--json"])
+            .output()
+            .unwrap()
+    };
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: Frame = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(frame.gpus[0].protection.mode, Mode::Monitor);
+    assert_eq!(frame.gpus[0].reading.power_limit_w, Some(600.0));
+    assert!(frame.recent_events.is_empty());
+    assert!(!run(&["--uuid", "GPU-MISSING"]).status.success());
+    assert!(!run(&["--adapter", "99"]).status.success());
+    config.gpu_uuid = Some("GPU-MISSING".into());
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    assert!(!run(&[]).status.success());
+    assert!(run(&["--index", "0"]).status.success());
+    assert!(
+        run(&["--uuid", "GPU-SIMULATED-ASTRAL", "--adapter", "1"])
+            .status
+            .success()
+    );
+    std::fs::write(&path, "invalid = true").unwrap();
+    assert!(!run(&[]).status.success());
+    std::fs::remove_file(&path).unwrap();
+    assert!(!run(&[]).status.success()); // explicit missing configuration never silently falls back
+}

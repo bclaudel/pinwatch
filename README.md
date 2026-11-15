@@ -140,6 +140,18 @@ permission for the kernel ioctl interface. Direct use after provisioning:
 sudo pinwatch --direct --uuid GPU-your-uuid --adapter 1 status
 ```
 
+Direct mode automatically reads `/etc/pinwatch/pinwatch.toml` when present, using
+its `gpu_uuid`, `[adapters]` mappings, polling/freshness settings and NVML path.
+With the mapping configured, simply run `pinwatch --direct status` or
+`pinwatch --direct watch`. Use `--config /path/to/pinwatch.toml` for a different
+file. Explicit `--uuid` or `--index` overrides the configured GPU; `--adapter`
+overrides its adapter. Direct mode remains read-only even if the file says
+`mode = "active"`. An absent default file uses built-in defaults; unreadable or
+invalid files and explicitly requested missing files produce errors. Explicit
+`--simulate` skips the default system file for reproducible fixture runs (an
+explicit `--config` is still honored). Daemon-backed commands keep using cached
+IPC and the daemon's configuration.
+
 Do not use `i2cdetect` or sweep adapters to discover this sensor. On this host,
 read-only NVML discovery found adapters 1–7, so Pinwatch intentionally declined to
 choose one. The original project's choice of 1 is reference evidence, not proof
