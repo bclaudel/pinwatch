@@ -3,7 +3,7 @@
 Validated on 2026-11-15, x86_64 Arch Linux. These results distinguish simulation
 coverage from hardware validation.
 
-## Pinned environment
+## Initial pinned environment (Rust 1.94.0)
 
 - `flake.lock`: byte-for-byte identical to `/home/benoit/workspace/astro/flake.lock`.
 - `rust-toolchain.toml`: byte-for-byte identical to Astro's file.
@@ -93,3 +93,20 @@ selection, CLI UUID/index overrides, invalid adapter rejection, read-only mode
 with an active configuration, absent default fallback, and explicit missing or
 invalid configuration errors. CLI help was regenerated from the release binaries.
 No real hardware read or system binary installation was performed for this change.
+
+## Rust 1.100.0 update
+
+The development toolchain was upgraded from 1.94.0 to the explicit stable release
+1.100.0 (released 2026-11-12). The original March rust-overlay pin could not
+provide this release (`Stable 1.100.0 is not available`), so only that lockfile
+input was updated to revision `67f1944c7c99d8dbb57fa3d83043bc0a92cbcc56`.
+Both nixpkgs pins, flake-utils, systems, and Cargo.lock remain unchanged.
+
+`nix develop --command ./scripts/check.sh` passed on x86_64 Linux: formatting,
+Clippy with warnings denied, all **45 tests**, and both release binaries.
+Tool paths were verified to share the same Nix output: rustc 1.100.0,
+Clippy 0.1.100, rustfmt 1.11.0, and rust-analyzer 1.100.0.
+No source changes were needed. Cargo.toml retains the previously established
+Rust 1.94 minimum; rust-toolchain.toml selects the development compiler.
+aarch64 was not validated, and no installed binary/service or GPU setting was
+changed during this toolchain update.

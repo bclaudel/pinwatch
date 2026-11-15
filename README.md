@@ -28,9 +28,10 @@ is verified. Pinwatch does not measure ground contacts or connector temperature.
 
 ## Reproducible build and editor environment
 
-The Nix inputs and **exact `flake.lock`** are copied from Astro without refreshing
-any pins. Linux targets: x86_64 and aarch64 (only x86_64 validated here).
-`rust-toolchain.toml` selects **Rust 1.94.0** with clippy, rustfmt and rust-src;
+The Nix environment started from Astro’s exact lockfile. The `rust-overlay` pin
+was updated to provide Rust 1.100.0; the other Nix pins and Cargo dependencies
+remain unchanged. Linux targets: x86_64 and aarch64 (only x86_64 validated here).
+`rust-toolchain.toml` selects **Rust 1.100.0** with clippy, rustfmt and rust-src;
 it is the version authority. The flake uses
 `pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml`, preserving all listed
 components and adding **the same release's rust-analyzer**, rather than mixing in
