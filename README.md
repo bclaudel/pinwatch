@@ -172,7 +172,7 @@ unit's paths, create an IPC group, and choose authorized desktop readers:
 sudo groupadd --system pinwatch              # only if absent
 sudo install -m755 target/release/pinwatch target/release/pinwatchd /usr/local/bin/
 sudo install -d -m755 /etc/pinwatch
-sudo install -m640 -o root -g root examples/pinwatch.toml /etc/pinwatch/pinwatch.toml
+sudo install -m644 -o root -g root examples/pinwatch.toml /etc/pinwatch/pinwatch.toml
 sudo install -m644 install/pinwatchd.service /etc/systemd/system/
 sudo usermod -aG pinwatch YOUR_DESKTOP_USER   # log in again afterward
 sudo modprobe i2c-dev                       # provision module loading separately if desired
