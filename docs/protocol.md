@@ -66,7 +66,9 @@ Each GPU snapshot contains:
   `sample_duration_ms`, nullable `channels`, nullable `connector_total_w`,
   nullable `nvml_board_power_w`, nullable `power_limit_w`, nullable
   `power_balance_ratio`, nullable `current_balance_ratio`, `sensor_errors`,
-  and `nvml_errors`.
+  and `nvml_errors`. The v1 additive fields `graphics_clock_mhz`,
+  `memory_clock_mhz` (nullable observed clocks), and `clock_errors` report the clock
+  readback path. Older v1 producers may omit them; treat omission as unavailable.
 - `channels` is either **null** or exactly six records with `channel_id` 1–6,
   `voltage_v`, `current_a`, and `power_w`. Power is voltage × current. No physical
   contact numbering is promised. The packet must be exactly 24 bytes: six
@@ -88,7 +90,9 @@ Each GPU snapshot contains:
   `reason`, nullable `last_action`, nullable `last_outcome`, nullable
   `historical_restriction`. States are `initializing`, `monitoring`,
   `armed_unverified`, `dry_run`, `overload_unprotected`, `waiting`, `restricted`,
-  `degraded`. **Check freshness and protection separately**. `effective` records
+  `degraded`. Human output calls `armed_unverified` simply `armed`; it means active
+  monitoring with no intervention recorded in this daemon run. It does not require
+  runtime approval. **Check freshness and protection separately**. `effective` records
   known driver-confirmed controls, not connector safety. Historical restrictions
   are records from earlier runs; current hardware state must not be inferred from
   them. See [policy semantics](protection.md).
@@ -129,9 +133,13 @@ always uses daemon IPC; it never falls back to hardware.
 | `detail` | Human explanation; failure details also appear in outcome errors |
 
 Stages: `overload_detected`, `action_proposed` (dry-run only), `action_requested`,
-`action_applied`, `action_failed`, `protection_unavailable`, `monitoring_recovered`,
+`action_applied`, `action_verified`, `action_failed`, `protection_unavailable`, `monitoring_recovered`,
 `overload_cleared`. A request/detection is **not** a success. Clock fallback counts
-as applied only when both setters return success. `overload_cleared` never means
+as applied only when both setters return success, but remains `waiting` and
+`effective=false` until a fresh post-settling read observes both clocks at/below
+their targets. `action_verified` records that observation; a missing/exceeded
+clock readback records `action_failed`, even if channel current has recovered.
+`overload_cleared` never means
 caps/clocks were restored.
 
 Action: `{"kind":"power_limit","target_w":494.307}` or

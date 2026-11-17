@@ -192,6 +192,11 @@ slow/disconnecting clients, clean shutdown, events, and mocked notifications.
 `pinwatch notify --test` is a separate, explicitly requested real-popup test; it is
 never invoked by the test suite.
 
+The optional [hardware control check](examples/hardware-control-check.rs) exercises
+the real backend and reports setter outcomes and observed clocks. It requires an
+explicit administrative invocation, changes GPU settings, and never restores them
+automatically. It is not run by automated checks or the daemon.
+
 ## CLI and ownership
 
 ```sh
@@ -308,7 +313,8 @@ No Quickshell configuration or widget is included or changed.
   A private writable runtime override is supported only for simulation.
 - **Degraded / armed_unverified:** inspect read errors and control capabilities.
   Query support does not establish write permission. Dry-run is not protection;
-  no check here claims real setters have been tested.
+  real power-cap readback has been tested, but the minimum-clock requests did not
+  reach their targets on the tested setup; see the [known limitation](docs/protection.md#verified-hardware-controls-and-remaining-limitation).
 - **No desktop popup:** check companion stderr/user journal, socket group/session
   membership, session bus ownership, notification service and shell DND. It does
   not indicate whether GPU protection succeeded. Use system journal and telemetry.
@@ -316,11 +322,13 @@ No Quickshell configuration or widget is included or changed.
   Cached age increases and protection is degraded. See the policy's failure and
   restart behavior; software is not a hardware interlock.
 
-Hardware-independent tests verify policy and protocol behavior. Real interventions,
-service hardening under a running installed unit, desktop presentation, aarch64,
-and protective response under load have **not** been validated on hardware. No new
-stress test, service installation, popup, or hardware setting change was performed.
-See [validation record](docs/validation.md) for checks actually run.
+Hardware-independent tests verify policy and protocol behavior. Explicit idle
+hardware checks verified a real cap reduction from 600 W to 550 W under the
+daemon's service restrictions. Both clock setters were acknowledged, but observed
+clocks did not reach the requested 180/405 MHz limits; that fallback is not verified
+effective on this setup. Fresh clock-response checks now expose this as degraded
+protection. No stress test or real overload response was tested. Desktop
+presentation and aarch64 remain unvalidated. See the [hardware findings](docs/protection.md#verified-hardware-controls-and-remaining-limitation).
 
 ## Design and references
 

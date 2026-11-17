@@ -52,16 +52,30 @@ thresholds above 9.2 A and intervals above 5 seconds; Pinwatch rejects them.
    reference intent. Attempt both setters even if the first fails. Report each
    driver's acknowledgement separately. A partial fallback is degraded. These
    acknowledgements do not prove that instantaneous clocks/current have settled.
+   After `settle_ms`, require a fresh sample showing positive graphics and memory
+   clocks at or below the requested caps. Until then, state is `waiting` and
+   `effective=false`. Missing readback, clock-query errors, or an exceeded target
+   latches `degraded` / `action_failed`, even if current has recovered. Do not
+   repeatedly rewrite a lock the driver acknowledges without the expected effect.
+   Clock-query failures do not disable otherwise valid power-limit protection.
 6. Emit detection, persist/log `action_requested`, execute, then emit
-   `action_applied` or `action_failed`. No desktop delivery or acknowledgement is
+   `action_applied` or `action_failed`. Clock `action_applied` means setters were
+   acknowledged; a later `action_verified` records the observed response. No desktop
+   delivery or acknowledgement is
    involved. If persisting the request fails, do not perform that action. All event
    stages go to stderr (journald in the service), including coalesced desktop events.
 
 Power and clock capabilities are independent of sensor discovery. Queryable
 constraints **do not prove permission or setter support**. Before a successful
-intervention, active mode is `armed_unverified`, `effective=false`, and says so.
+intervention in this daemon run, active mode is `armed_unverified` in JSON and
+`armed` in terminal output, with `effective=false`. The message says "active
+monitoring; no intervention in this daemon run". This is per-run action history,
+not a claim that administrative hardware checks have never been performed or
+that the daemon is waiting for permission. Active mode acts automatically on an
+overload. Separate checks do not populate the daemon's intervention history.
 `effective=true` means a relevant control was driver-confirmed in this daemon
-instance and no currently known failure exists; it is not a safety certification
+instance and no currently known failure exists. Clock fallback additionally needs
+fresh observed clocks within the requested caps after settling. It is not a safety certification
 or an assurance that current has already fallen. A fresh overload awaiting a
 response is `waiting`, `effective=false`. Missing required ranges yields degraded
 protection without preventing read-only samples.
@@ -81,8 +95,8 @@ are application policy, not electrical specifications.
 
 Ten seconds of continuing overload without measured response latches a visible
 ineffective-protection failure instead of endlessly multiplying the cap downward.
-After emergency clocks, allow the settling period; continued overload then latches
-a failure without repeating setters. Setter failures also latch for this process.
+After emergency clocks, allow the settling period; unverifiable clocks or continued
+overload then latch a failure without repeating setters. Setter failures also latch for this process.
 Review the error/driver/permissions before an administrative restart; restart is
 not restoration and may attempt a new intervention if overload remains.
 
@@ -92,7 +106,9 @@ latch. A reported cap increase after Pinwatch's confirmation (another tool or a
 driver reset) latches a degraded state. NVML offers no atomic compare-and-set cap
 operation: do not run competing control managers. The final read/check/write still
 has a race with external software. Existing locked-clock ranges cannot be reliably
-read back through the chosen API; later external clock changes may not be detected.
+read back through the chosen API. Actual clocks are sampled; exceeding requested
+caps degrades protection, but an idle reading below a cap cannot prove the lock
+will survive later load, driver resets, or another control manager.
 
 ## Missing telemetry, restart, exit
 
@@ -126,3 +142,28 @@ The fixture's initial readings are representative of the user's historical
 peak GPU temperature 70.79°C, peak channel current 7.76 A and zero computation
 errors. The overload and recovery frames are synthetic. Neither that run nor these
 unit tests validate hardware protection at 600 W, other boards, or other connectors.
+
+## Verified hardware controls and remaining limitation
+
+Idle hardware checks on an ASUS ROG-ASTRAL-RTX5090-O32G with NVIDIA driver
+620.70.06 used the real backend/executor under the daemon's service restrictions:
+
+| Control | Result |
+|---|---|
+| Power cap 600 → 550 W | Driver accepted it; repeated NVML and nvidia-smi readback confirmed 550 W |
+| Graphics/memory caps 180/405 MHz | Both setters acknowledged, but observed clocks stayed around 217–225/14,001 MHz |
+
+Equal lower/upper clock bounds produced the same discrepancy. The implementation
+retains the reference's `[0, minimum]` request. LACT was running with an undervolt
+profile; there is no established cause for the mismatch.
+
+**Do not rely on minimum-clock fallback to achieve its requested limits on this
+setup.** The software reports an unverified/failed clock response rather than an
+effective restriction. Configured power-cap readback was verified; loaded
+consumption response, real overload recovery, and electrical safety were not.
+These results are specific to the tested hardware/driver configuration.
+
+The optional [hardware control check](../examples/hardware-control-check.rs) can
+reproduce setter/readback checks. It changes real hardware settings, requires an
+explicit administrative invocation, and never restores higher caps or clocks.
+Automated tests use simulated hardware instead.

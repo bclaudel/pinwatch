@@ -447,3 +447,118 @@ fn optional_config_only_falls_back_when_absent() {
     std::fs::create_dir(&path).unwrap();
     assert!(Config::read_optional(&path).is_err());
 }
+
+#[test]
+fn clock_acknowledgements_wait_for_fresh_observed_response() {
+    let (c, mut backend, d, r) = setup(9.1, 400.0);
+    let mut engine = Engine::new(c.mode, None);
+    let mut events = vec![];
+    engine
+        .tick(&c, &d, &r, 0, 0, &mut backend, &mut |e| {
+            events.push(e);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(engine.protection.state, "waiting");
+    assert!(!engine.protection.effective);
+    let mut recovered = backend.sample(&d, 2);
+    for channel in recovered.channels.as_mut().unwrap() {
+        channel.current_a = 1.0;
+    }
+    engine
+        .tick(&c, &d, &recovered, 0, 2000, &mut backend, &mut |e| {
+            events.push(e);
+            Ok(())
+        })
+        .unwrap();
+    assert!(!engine.protection.effective);
+    recovered.sample_sequence = 3;
+    engine
+        .tick(&c, &d, &recovered, 0, 4000, &mut backend, &mut |e| {
+            events.push(e);
+            Ok(())
+        })
+        .unwrap();
+    assert!(engine.protection.effective);
+    assert_eq!(engine.protection.state, "restricted");
+    assert!(events.iter().any(|e| e.kind == "action_verified"));
+    assert_eq!(backend.writes.len(), 2);
+}
+
+#[test]
+fn acknowledged_but_ineffective_clocks_degrade_even_when_current_recovers() {
+    let (c, mut backend, d, r) = setup(9.1, 400.0);
+    let mut engine = Engine::new(c.mode, None);
+    engine
+        .tick(&c, &d, &r, 0, 0, &mut backend, &mut |_| Ok(()))
+        .unwrap();
+    let mut observed = backend.sample(&d, 2);
+    observed.graphics_clock_mhz = Some(225);
+    observed.memory_clock_mhz = Some(14001);
+    for channel in observed.channels.as_mut().unwrap() {
+        channel.current_a = 0.7;
+    }
+    let mut events = vec![];
+    engine
+        .tick(&c, &d, &observed, 0, 4000, &mut backend, &mut |e| {
+            events.push(e);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(engine.protection.state, "degraded");
+    assert!(!engine.protection.effective);
+    assert_eq!(events.last().unwrap().kind, "action_failed");
+    let outcome = engine.protection.last_outcome.as_ref().unwrap();
+    assert!(outcome.graphics_locked && outcome.memory_locked); // acknowledgements remain accurate
+    assert!(!outcome.errors.is_empty());
+    observed.sample_sequence = 3;
+    engine
+        .tick(&c, &d, &observed, 0, 10000, &mut backend, &mut |_| Ok(()))
+        .unwrap();
+    assert!(!engine.protection.effective);
+    assert_eq!(backend.writes.len(), 2); // never repeatedly retry ineffective setters
+}
+
+#[test]
+fn missing_clock_readback_does_not_hide_power_telemetry_but_cannot_verify_fallback() {
+    let (c, mut backend, d, mut r) = setup(9.1, 400.0);
+    r.graphics_clock_mhz = None;
+    r.memory_clock_mhz = None;
+    r.clock_errors.push("clock query unsupported".into());
+    assert!(r.valid());
+    let mut engine = Engine::new(c.mode, None);
+    engine
+        .tick(&c, &d, &r, 0, 0, &mut backend, &mut |_| Ok(()))
+        .unwrap();
+    r.sample_sequence = 2;
+    engine
+        .tick(&c, &d, &r, 0, 4000, &mut backend, &mut |_| Ok(()))
+        .unwrap();
+    assert_eq!(engine.protection.state, "degraded");
+    assert!(!engine.protection.effective);
+}
+
+#[test]
+fn read_only_clock_proposals_do_not_claim_failed_or_verified_hardware() {
+    for mode in [Mode::Monitor, Mode::DryRun] {
+        let (mut c, mut backend, d, mut r) = setup(9.1, 400.0);
+        c.mode = mode;
+        let mut engine = Engine::new(mode, None);
+        let mut events = vec![];
+        for sequence in 1..=3 {
+            r.sample_sequence = sequence;
+            engine
+                .tick(&c, &d, &r, 0, sequence * 5000, &mut backend, &mut |e| {
+                    events.push(e);
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert!(backend.writes.is_empty());
+        assert!(!engine.protection.effective);
+        assert!(events.iter().all(|e| !matches!(
+            e.kind.as_str(),
+            "action_applied" | "action_verified" | "action_failed"
+        )));
+    }
+}

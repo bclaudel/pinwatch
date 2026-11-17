@@ -74,7 +74,10 @@
         "power_balance_ratio": 0.9353369763205829,
         "current_balance_ratio": 0.9353369763205829,
         "sensor_errors": [],
-        "nvml_errors": []
+        "nvml_errors": [],
+        "graphics_clock_mhz": 1500,
+        "memory_clock_mhz": 14001,
+        "clock_errors": []
       },
       "sample_age_ms": 0,
       "freshness": "fresh",

@@ -28,7 +28,10 @@ pub fn map_event(e: &Event, historical: bool) -> Option<Notice> {
     let (summary, severity) = match (e.kind.as_str(), e.action.as_ref()) {
         ("action_applied", Some(Action::PowerLimit { .. })) => ("GPU power limit reduced", 1),
         ("action_applied", Some(Action::ClockThrottle { .. })) => {
-            ("GPU emergency clock throttling", 2)
+            ("GPU emergency clock restriction requested", 2)
+        }
+        ("action_verified", Some(Action::ClockThrottle { .. })) => {
+            ("GPU emergency clock throttling observed", 2)
         }
         ("action_failed", _) => ("GPU protective intervention failed", 3),
         ("protection_unavailable", _) => ("GPU protection unavailable", 3),
@@ -58,7 +61,7 @@ pub fn map_event(e: &Event, historical: bool) -> Option<Notice> {
             }),
             Some(o),
         ) => format!(
-            "Graphics {graphics_mhz} MHz confirmed: {}; memory {memory_mhz} MHz confirmed: {}. ",
+            "Graphics {graphics_mhz} MHz setter acknowledged: {}; memory {memory_mhz} MHz setter acknowledged: {}. ",
             o.graphics_locked, o.memory_locked
         ),
         (Some(action), _) => format!("Requested/proposed: {action:?}. "),
@@ -159,7 +162,9 @@ impl Manager {
                                     e.kind.as_str(),
                                     "action_failed" | "protection_unavailable"
                                 ),
-                                "restricted" | "waiting" => e.kind == "action_applied",
+                                "restricted" | "waiting" => {
+                                    matches!(e.kind.as_str(), "action_applied" | "action_verified")
+                                }
                                 "dry_run" => e.kind == "action_proposed",
                                 _ => false,
                             }
@@ -234,7 +239,10 @@ impl Manager {
                     .recent_events
                     .iter()
                     .rev()
-                    .find(|e| e.gpu_uuid == gpu.device.gpu_uuid && e.kind == "action_applied")
+                    .find(|e| {
+                        e.gpu_uuid == gpu.device.gpu_uuid
+                            && matches!(e.kind.as_str(), "action_applied" | "action_verified")
+                    })
                     .or(gpu.protection.historical_restriction.as_ref());
                 if let Some(event) = restriction
                     && let Some(notice) = map_event(event, true)

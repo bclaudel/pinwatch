@@ -46,6 +46,12 @@ pub struct Reading {
     pub connector_total_w: Option<f64>,
     pub nvml_board_power_w: Option<f64>,
     pub power_limit_w: Option<f64>,
+    #[serde(default)]
+    pub graphics_clock_mhz: Option<u32>,
+    #[serde(default)]
+    pub memory_clock_mhz: Option<u32>,
+    #[serde(default)]
+    pub clock_errors: Vec<String>,
     pub power_balance_ratio: Option<f64>,
     pub current_balance_ratio: Option<f64>,
     pub sensor_errors: Vec<String>,
@@ -61,6 +67,9 @@ impl Reading {
             connector_total_w: None,
             nvml_board_power_w: None,
             power_limit_w: None,
+            graphics_clock_mhz: None,
+            memory_clock_mhz: None,
+            clock_errors: vec![],
             power_balance_ratio: None,
             current_balance_ratio: None,
             sensor_errors: vec![],

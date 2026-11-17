@@ -42,8 +42,10 @@ second invocation with `--test`. No shared privileged session selector is involv
 
 - Confirmed power reduction: critical urgency, GPU UUID, triggering channel/current,
   threshold, previous cap, requested and confirmed cap.
-- Driver-acknowledged emergency clock throttling: critical urgency, both clock
-  outcomes. A partial failure is a failure notice, never a success.
+- Emergency clock restriction requested: critical urgency, both setter
+  acknowledgements, with observed response pending. `action_verified` can report
+  observed throttling after settling; unavailable/exceeded readback reports failure.
+  A partial fallback is a failure notice, never a success.
 - Failed intervention, degraded/stale telemetry, unverified active protection, or
   a sustained daemon disconnection: critical urgency with a concise reason.
 - Dry-run proposals: clearly labeled **SIMULATION**. Synthetic-backend applied

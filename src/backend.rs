@@ -196,6 +196,14 @@ impl Backend for Hardware {
                     Ok(p) => reading.power_limit_w = Some(f64::from(p) / 1000.0),
                     Err(e) => reading.nvml_errors.push(format!("power cap: {e}")),
                 }
+                match device.clock_info(Clock::Graphics) {
+                    Ok(mhz) => reading.graphics_clock_mhz = Some(mhz),
+                    Err(e) => reading.clock_errors.push(format!("graphics clock: {e}")),
+                }
+                match device.clock_info(Clock::Memory) {
+                    Ok(mhz) => reading.memory_clock_mhz = Some(mhz),
+                    Err(e) => reading.clock_errors.push(format!("memory clock: {e}")),
+                }
             }
             Err(e) => {
                 reading
@@ -282,6 +290,8 @@ pub struct SimBackend {
     pub fixture: Fixture,
     pub cap_w: f64,
     pub writes: Vec<String>,
+    pub graphics_clock_mhz: u32,
+    pub memory_clock_mhz: u32,
     position: usize,
 }
 impl SimBackend {
@@ -301,6 +311,8 @@ impl SimBackend {
             fixture,
             cap_w: 600.0,
             writes: vec![],
+            graphics_clock_mhz: 1500,
+            memory_clock_mhz: 14001,
             position: 0,
         })
     }
@@ -349,6 +361,8 @@ impl Backend for SimBackend {
         } else {
             r.nvml_board_power_w = Some(s.board_power_w);
             r.power_limit_w = Some(self.cap_w);
+            r.graphics_clock_mhz = Some(self.graphics_clock_mhz);
+            r.memory_clock_mhz = Some(self.memory_clock_mhz);
         }
         r
     }
@@ -365,11 +379,13 @@ impl Backend for SimBackend {
     fn lock_graphics(&mut self, _: &str, mhz: u32) -> Result<()> {
         self.writes.push(format!("graphics:{mhz}"));
         ensure!(!self.fixture.fail_graphics, "simulated graphics failure");
+        self.graphics_clock_mhz = mhz;
         Ok(())
     }
     fn lock_memory(&mut self, _: &str, mhz: u32) -> Result<()> {
         self.writes.push(format!("memory:{mhz}"));
         ensure!(!self.fixture.fail_memory, "simulated memory failure");
+        self.memory_clock_mhz = mhz;
         Ok(())
     }
 }

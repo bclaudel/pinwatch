@@ -96,6 +96,7 @@ pub struct Engine {
     last_attempt: Option<(u64, f64, f64)>, // monotonic elapsed, measured W, maximum A
     failed: bool,
     unavailable_reason: Option<String>,
+    clock_response_confirmed: bool,
 }
 impl Engine {
     pub fn new(mode: Mode, historical: Option<Event>) -> Self {
@@ -114,6 +115,7 @@ impl Engine {
             last_attempt: None,
             failed: false,
             unavailable_reason: None,
+            clock_response_confirmed: false,
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -211,6 +213,59 @@ impl Engine {
             return Ok(());
         }
         self.last_sequence = Some(r.sample_sequence);
+        // Setter acknowledgement is not proof of a physical clock restriction.
+        // Validate on a fresh post-settling sample even after current has recovered.
+        if config.mode == Mode::Active
+            && !self.failed
+            && self.protection.last_outcome.is_some()
+            && let Some(Action::ClockThrottle {
+                graphics_mhz,
+                memory_mhz,
+            }) = self.protection.last_action.clone()
+        {
+            if self
+                .last_attempt
+                .is_some_and(|(when, _, _)| elapsed_ms.saturating_sub(when) < config.settle_ms)
+            {
+                self.state(
+                    "waiting",
+                    false,
+                    "driver acknowledged clock request; waiting for observed response",
+                );
+                return Ok(());
+            }
+            let matched = r.clock_errors.is_empty()
+                && r.graphics_clock_mhz
+                    .is_some_and(|value| value > 0 && value <= graphics_mhz)
+                && r.memory_clock_mhz
+                    .is_some_and(|value| value > 0 && value <= memory_mhz);
+            if !matched {
+                let detail = format!(
+                    "driver acknowledged clock locks but observed clocks do not verify them: graphics {:?} MHz (target <= {graphics_mhz}), memory {:?} MHz (target <= {memory_mhz}); errors: {:?}",
+                    r.graphics_clock_mhz, r.memory_clock_mhz, r.clock_errors
+                );
+                self.failed = true;
+                if let Some(outcome) = &mut self.protection.last_outcome {
+                    outcome.errors.push(detail.clone());
+                }
+                self.state("degraded", false, &detail);
+                emit(self.event(
+                    config,
+                    info,
+                    r,
+                    "action_failed",
+                    &detail,
+                    self.protection.last_action.clone(),
+                    self.protection.last_outcome.clone(),
+                ))?;
+                return Ok(());
+            }
+            if !self.clock_response_confirmed {
+                self.clock_response_confirmed = true;
+                emit(self.event(config, info, r, "action_verified", "fresh clocks observed at or below requested caps; this does not certify connector safety",
+                    self.protection.last_action.clone(), self.protection.last_outcome.clone()))?;
+            }
+        }
         if !self.failed
             && let Some(confirmed) = self
                 .protection
@@ -256,7 +311,7 @@ impl Engine {
                 self.state(
                     "armed_unverified",
                     false,
-                    "monitoring; control permissions/support cannot be verified without a write",
+                    "active monitoring; no intervention in this daemon run",
                 );
             } else {
                 self.state(
@@ -435,17 +490,30 @@ impl Engine {
                 Some(outcome),
             ))?;
         } else {
+            let clock_request = matches!(action, Action::ClockThrottle { .. });
             self.state(
-                "restricted",
-                true,
-                "driver confirmed control; physical response not guaranteed",
+                if clock_request {
+                    "waiting"
+                } else {
+                    "restricted"
+                },
+                !clock_request,
+                if clock_request {
+                    "driver acknowledged clock request; observed response pending"
+                } else {
+                    "driver confirmed power cap; physical response not guaranteed"
+                },
             );
             emit(self.event(
                 config,
                 info,
                 r,
                 "action_applied",
-                "driver confirmed control; restrictions retained",
+                if clock_request {
+                    "driver acknowledged clock setters; observed response pending"
+                } else {
+                    "driver confirmed power cap; restrictions retained"
+                },
                 Some(action),
                 Some(outcome),
             ))?;

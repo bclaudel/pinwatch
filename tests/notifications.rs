@@ -299,3 +299,29 @@ async fn reason_wording_change_does_not_repeat_a_failure_popup() {
     manager.ingest(&f, 1000, false);
     assert!(manager.pending.is_empty());
 }
+
+#[test]
+fn clock_notifications_distinguish_acknowledgement_from_observed_response() {
+    let mut e = event("action_applied", 1);
+    e.action = Some(Action::ClockThrottle {
+        graphics_mhz: 180,
+        memory_mhz: 405,
+    });
+    let requested = notify::map_event(&e, false).unwrap();
+    assert!(requested.summary.contains("requested"));
+    assert!(requested.body.contains("setter acknowledged"));
+    e.kind = "action_verified".into();
+    assert!(
+        notify::map_event(&e, false)
+            .unwrap()
+            .summary
+            .contains("observed")
+    );
+    e.kind = "action_failed".into();
+    assert!(
+        notify::map_event(&e, false)
+            .unwrap()
+            .summary
+            .contains("failed")
+    );
+}

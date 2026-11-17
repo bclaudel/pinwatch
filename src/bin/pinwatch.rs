@@ -86,7 +86,14 @@ fn display(frame: &Frame, json: bool) -> Result<()> {
         writeln!(
             stdout,
             "  {} (age {} ms) | protection: {} — {}",
-            gpu.freshness, gpu.sample_age_ms, gpu.protection.state, gpu.protection.reason
+            gpu.freshness,
+            gpu.sample_age_ms,
+            if gpu.protection.state == "armed_unverified" {
+                "armed"
+            } else {
+                &gpu.protection.state
+            },
+            gpu.protection.reason
         )?;
         let fmt = |v: Option<f64>| v.map_or("unavailable".into(), |v| format!("{v:.2}"));
         writeln!(
@@ -116,6 +123,7 @@ fn display(frame: &Frame, json: bool) -> Result<()> {
             .sensor_errors
             .iter()
             .chain(&gpu.reading.nvml_errors)
+            .chain(&gpu.reading.clock_errors)
         {
             writeln!(stdout, "  ERROR: {error}")?;
         }

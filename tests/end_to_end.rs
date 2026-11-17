@@ -299,8 +299,13 @@ async fn automatic_watch_hands_off_between_local_and_restarted_daemon() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     let parser = tokio::task::spawn_blocking(move || {
         use std::io::BufRead;
-        for line in std::io::BufReader::new(stdout).lines() {
-            let frame: Frame = serde_json::from_str(&line.unwrap()).unwrap();
+        let mut reader = std::io::BufReader::new(stdout);
+        loop {
+            let mut line = vec![];
+            if reader.read_until(b'\n', &mut line).unwrap() == 0 || !line.ends_with(b"\n") {
+                break; // teardown may kill the subprocess partway through its final line
+            }
+            let frame: Frame = serde_json::from_slice(&line).unwrap();
             if tx.blocking_send(frame).is_err() {
                 break;
             }
