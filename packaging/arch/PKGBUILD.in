@@ -35,9 +35,6 @@ package() {
   install -Dm644 examples/pinwatch.toml "${pkgdir}/etc/pinwatch/pinwatch.toml"
   install -Dm644 install/pinwatchd.service "${pkgdir}/usr/lib/systemd/system/pinwatchd.service"
   install -Dm644 install/pinwatch-notify.service "${pkgdir}/usr/lib/systemd/user/pinwatch-notify.service"
-  sed -i 's|/usr/local/bin/|/usr/bin/|g' \
-    "${pkgdir}/usr/lib/systemd/system/pinwatchd.service" \
-    "${pkgdir}/usr/lib/systemd/user/pinwatch-notify.service"
   install -Dm644 packaging/arch/pinwatch.sysusers "${pkgdir}/usr/lib/sysusers.d/pinwatch.conf"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/pinwatch/LICENSE"
   install -Dm644 README.md "${pkgdir}/usr/share/doc/pinwatch/README.md"

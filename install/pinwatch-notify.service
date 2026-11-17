@@ -5,7 +5,7 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/pinwatch notify
+ExecStart=/usr/bin/pinwatch notify
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=yes

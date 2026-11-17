@@ -26,6 +26,103 @@ Six four-byte big-endian voltage/current records represent **six supply channels
 These are not twelve independent contact measurements and no physical pin mapping
 is verified. Pinwatch does not measure ground contacts or connector temperature.
 
+## Install on Arch Linux
+
+Build a local package as your normal user, then install the archive printed by the
+helper:
+
+```sh
+sudo pacman -S --needed base-devel rust python
+./scripts/package-arch.py
+paru -U ./target/arch/pinwatch-VERSION-.../pinwatch-VERSION-1-x86_64.pkg.tar.zst
+# Alternatively: sudo pacman -U <package-file>
+```
+
+The helper snapshots your checkout, including local edits, generates a checksummed
+PKGBUILD, and runs `makepkg --check`. It uses Arch's native toolchain and enforces
+Cargo.lock, including when launched from Nix/direnv; installed binaries have no Nix
+store dependency. `--prepare-only` skips the build. Output stays in `target/arch/`.
+Nothing is published to the AUR.
+
+The package installs the binaries in `/usr/bin`, system/user units in
+`/usr/lib/systemd`, the configuration in `/etc/pinwatch/pinwatch.toml`, and docs
+in `/usr/share/doc/pinwatch`. Arch's systemd hooks create the `pinwatch` IPC group.
+Installation does not start services, add users to groups, or change GPU settings.
+
+### Configure and start
+
+```sh
+pinwatch --direct devices
+sudoedit /etc/pinwatch/pinwatch.toml
+```
+
+Keep `mode = "monitor"` initially. Set `gpu_uuid` to select one GPU, and populate
+`[adapters]` with its UUID and known sensor adapter when discovery is ambiguous.
+See the [example configuration](examples/pinwatch.toml). The file is readable by
+all users and writable only by root.
+
+```sh
+sudo usermod -aG pinwatch YOUR_DESKTOP_USER
+sudo modprobe i2c-dev
+sudo systemctl enable --now pinwatchd.service
+```
+
+Log out and back in after changing groups. For module loading at boot, create
+`/etc/modules-load.d/pinwatch.conf` containing `i2c-dev`. Check readings with
+`pinwatch status` or `pinwatch watch`, and logs with `journalctl -u pinwatchd -f`.
+
+For optional desktop notifications, run as your desktop user:
+
+```sh
+systemctl --user enable --now pinwatch-notify.service
+```
+
+See [desktop notifications](docs/notifications.md) for graphical-session
+requirements. For active protection, review the [policy](docs/protection.md),
+set `mode = "active"`, and restart the daemon. `mode = "dry_run"` reports proposals
+without hardware changes.
+
+### Upgrade or change configuration
+
+Rebuild and install the new archive with `-U`; repeated development builds can
+have the same version and will be reinstalled. Your modified configuration is
+preserved. If packaged defaults also change, review `pinwatch.toml.pacnew`.
+Restart to load the new configuration/binary:
+
+```sh
+sudo systemctl restart pinwatchd.service
+systemctl --user restart pinwatch-notify.service  # if enabled; after an upgrade
+```
+
+### Uninstall
+
+```sh
+systemctl --user disable --now pinwatch-notify.service  # if enabled
+sudo systemctl disable --now pinwatchd.service
+sudo pacman -R pinwatch
+# Alternatively: paru -R pinwatch
+```
+
+A modified configuration is retained as `.pacsave`; `--nosave` (`-n`, including
+`-Rns`) discards that backup. Runtime/state data, restriction history and group
+membership remain. Review enabled companion units in other user sessions too.
+Stopping, restarting, or uninstalling never raises GPU caps or unlocks clocks.
+
+### Service permissions
+
+Systemd creates `/run/pinwatch` (`root:pinwatch`, 0750) and `/var/lib/pinwatch`
+(0700). The socket is 0660, ownership locks 0644, and history 0600. Runtime locks
+persist across service stops; never delete them while a Pinwatch poller is running.
+
+The daemon runs as root with a `CAP_SYS_ADMIN` bounding set for NVIDIA controls,
+restricted filesystem/network access, and host I²C/NVIDIA device access through
+`PrivateDevices=no` and `DeviceAllow=char-i2c rw` / `char-nvidia rw`. Check
+`/proc/devices` and permissions if access fails. For extra monitor-only hardening,
+a `systemctl edit pinwatchd` override can clear `CapabilityBoundingSet=` and force
+`--monitor-only` on `ExecStart`. The desktop companion needs only IPC group access,
+not GPU permissions or capabilities. Historical restrictions do not establish
+current hardware state; see the [protection policy](docs/protection.md).
+
 ## Reproducible build and editor environment
 
 The Nix environment started from Astro’s exact lockfile. The `rust-overlay` pin
@@ -51,9 +148,7 @@ nix develop --command ./scripts/check.sh
 
 Individual checks are `cargo fmt --all -- --check`,
 `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked`, and
-`cargo build --locked --release --bins`. Before initial files are staged, Nix's Git
-source filtering can omit new files: use `nix develop path:.` during bootstrap.
-A clean checkout works with plain `nix develop`. `.envrc` contains `use flake`;
+`cargo build --locked --release --bins`. `.envrc` contains `use flake`;
 optionally run `direnv allow` after reviewing it. Launch your editor from that
 shell or use its direnv integration; check `command -v rustc cargo-clippy rustfmt
 rust-analyzer` if editor/build tools disagree. Do not substitute host `cargo-clippy`.
@@ -175,87 +270,6 @@ requirements; inspect the loader's stderr, library symlink, and `ldd` output.
 Do not globally set `LD_LIBRARY_PATH=/usr/lib` inside Nix to solve this: that can
 replace unrelated Nix libraries. Builds and simulated tests never need NVML.
 
-## Local Arch package
-
-For pacman/paru-managed installation and removal without publishing to the AUR:
-
-```sh
-./scripts/package-arch.py
-# Install the resulting archive explicitly:
-sudo pacman -U ./target/arch/pinwatch-VERSION-.../pinwatch-VERSION-1-x86_64.pkg.tar.zst
-# Later, after stopping/disabling Pinwatch services:
-sudo pacman -Rns pinwatch
-```
-
-The helper builds/tests a source snapshot with Arch's native toolchain, including
-when launched from direnv's Nix environment. It never installs or activates the
-package. See [local packaging instructions](docs/arch-packaging.md) for prerequisites,
-paru commands, configuration preservation, and **migration from a manual install**
-so `/usr/local` binaries and `/etc` units do not shadow the packaged versions.
-
-## System service installation (explicit administrator steps)
-
-Review the configuration and unit first. These commands are instructions, **not
-steps run by development/test scripts**. Install the two release binaries at the
-unit's paths, create an IPC group, and choose authorized desktop readers:
-
-```sh
-sudo groupadd --system pinwatch              # only if absent
-sudo install -m755 target/release/pinwatch target/release/pinwatchd /usr/local/bin/
-sudo install -d -m755 /etc/pinwatch
-sudo install -m644 -o root -g root examples/pinwatch.toml /etc/pinwatch/pinwatch.toml
-sudo install -m644 install/pinwatchd.service /etc/systemd/system/
-sudo usermod -aG pinwatch YOUR_DESKTOP_USER   # log in again afterward
-sudo modprobe i2c-dev                       # provision module loading separately if desired
-```
-
-Edit `/etc/pinwatch/pinwatch.toml`: keep `mode = "monitor"` initially and populate
-`[adapters]` using the stable GPU UUID and known sensor adapter. Then, explicitly:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl enable --now pinwatchd.service
-journalctl -u pinwatchd -f
-```
-
-Systemd creates `/run/pinwatch` (`root:pinwatch`, 0750) and
-`/var/lib/pinwatch` (0700). The socket is 0660, ownership locks 0644, and history
-0600. RuntimeDirectoryPreserve avoids replacing lock inodes between service runs.
-The daemon refuses unsafe runtime directories, symlinks/non-sockets at the socket
-path, a live endpoint, duplicate ownership, and invalid history. Stale socket
-cleanup is done only while holding the socket lock; shutdown checks its inode.
-
-The system unit uses root with a `CAP_SYS_ADMIN` bounding set because NVIDIA
-setters may require it; `NoNewPrivileges` prevents gaining additional privileges.
-`PrivateDevices=no` and the actual `char-i2c` / `char-nvidia` character-device
-allowlist permit host ioctls. Those names were checked in this host's `/proc/devices`
-(majors 89 and 195). `ProtectSystem=strict` leaves only systemd-managed runtime/state
-paths writable, `ProtectHome=yes` hides user homes, AF_UNIX permits the IPC socket,
-and `PrivateNetwork=yes` prevents network use. No copied blanket privileged/ioctl
-syscall filter is used. NVML loading requires the host library path to remain visible.
-If a different driver requires additional device nodes, diagnose the denied
-access before extending the allowlist; do not disable all isolation blindly.
-
-For extra monitor-only hardening, use a service override with an empty
-`CapabilityBoundingSet=` and `ExecStart=` followed by the same command with
-`--monitor-only`. The program performs no controls in monitor mode even without
-this override. Root simplifies device permissions in the supplied example; a
-non-root monitor may instead be provisioned with access to only the necessary
-I²C/NVIDIA nodes and runtime/state directories. Pinwatch does not install udev
-rules or alter device permissions automatically. The desktop companion needs
-**only** the IPC group, never GPU device access or `CAP_SYS_ADMIN`.
-
-For active protection, review [the exact decision process and limitations](docs/protection.md),
-change `mode = "active"`, and explicitly restart the service. `--dry-run` forces
-read-only proposed actions regardless of an active config. There is no automatic
-restore command, shutdown reset, or IPC to raise power/unlock clocks. A system
-restart may preserve restrictions; consult actual current NVML state plus the
-historical event records. Other tools can also change GPU settings.
-
-Desktop companion setup and the optional graphical-session user unit are covered
-in [desktop notifications](docs/notifications.md). A conforming notification
-server receives standard D-Bus messages; Quickshell needs no Pinwatch-specific API.
-
 ## Quickshell / other clients
 
 Use `pinwatch watch --json` as a `Process` with a line parser. Parse each object,
@@ -274,8 +288,8 @@ No Quickshell configuration or widget is included or changed.
   DeviceAllow names. A notification companion does not need those permissions.
 - **Another instance owns device/socket:** use cached IPC, stop the other poller,
   or wait for it to exit. Do not delete lock files to bypass ownership.
-- **Runtime directory absent:** the system unit creates it. For manual daemon
-  operation, explicitly provision the same root-owned directories and group/modes.
+- **Runtime directory absent:** start the packaged `pinwatchd.service` to create
+  it. The directory is preserved when the service stops, allowing direct monitoring.
   A private writable runtime override is supported only for simulation.
 - **Degraded / armed_unverified:** inspect read errors and control capabilities.
   Query support does not establish write permission. Dry-run is not protection;

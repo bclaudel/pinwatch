@@ -138,7 +138,7 @@ they must label replay/historical outcomes rather than implying new changes.
 ## Quickshell consumption recipe (no widget/configuration changes)
 
 Use a `Quickshell.Io.Process` with command arguments
-`["/usr/local/bin/pinwatch", "watch", "--json"]`. Attach a `SplitParser` to stdout;
+`["/usr/bin/pinwatch", "watch", "--json"]`. Attach a `SplitParser` to stdout;
 for each `onRead` line, call `JSON.parse(data)`, validate `schema_version === 1`,
 and select a GPU by `device.gpu_uuid`. Update all six channel values together.
 Use `sample_sequence` to distinguish polls from heartbeats and `freshness` /

@@ -23,11 +23,9 @@ no GPU-control IPC exists. Run **as that user**:
 pinwatch notify
 ```
 
-Optional user unit (after installing the binaries/system service):
+The Arch package includes the user unit. Enable it as your desktop user:
 
 ```sh
-install -Dm644 install/pinwatch-notify.service ~/.config/systemd/user/pinwatch-notify.service
-systemctl --user daemon-reload
 systemctl --user enable --now pinwatch-notify.service
 ```
 
