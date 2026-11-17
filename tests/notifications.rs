@@ -263,13 +263,18 @@ fn markup_is_escaped_and_no_restore_actions_exist() {
 }
 
 #[tokio::test]
-async fn unverified_warning_does_not_suppress_first_intervention_or_new_incident() {
+async fn armed_startup_is_quiet_and_does_not_suppress_intervention_or_new_incident() {
     let mut manager = Manager::default();
     let mut sink = MockSink::default();
     manager.ingest(&frame(vec![], "armed_unverified"), 0, true);
+    manager.ingest(&frame(vec![], "armed_unverified"), 500, false);
+    assert!(manager.pending.is_empty());
+    manager.server_restarted();
+    assert!(manager.pending.is_empty());
     notify::deliver_pending(&mut manager, &mut sink, 0)
         .await
         .unwrap();
+    assert!(sink.sent.is_empty());
     manager.ingest(
         &frame(vec![event("action_applied", 1)], "restricted"),
         1000,
@@ -278,8 +283,8 @@ async fn unverified_warning_does_not_suppress_first_intervention_or_new_incident
     notify::deliver_pending(&mut manager, &mut sink, 1000)
         .await
         .unwrap();
-    assert_eq!(sink.sent.len(), 2);
-    assert!(sink.sent[1].0.summary.contains("reduced"));
+    assert_eq!(sink.sent.len(), 1);
+    assert!(sink.sent[0].0.summary.contains("reduced"));
     let mut next = event("action_applied", 2);
     next.incident_id = "new-incident".into();
     manager.ingest(&frame(vec![next], "restricted"), 2000, false);

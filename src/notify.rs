@@ -190,10 +190,9 @@ impl Manager {
             }
         }
         for gpu in &frame.gpus {
-            let unhealthy = gpu.freshness != "fresh"
-                || gpu.protection.state == "degraded"
-                || (gpu.protection.mode == Mode::Active
-                    && gpu.protection.state == "armed_unverified");
+            // Armed means active monitoring with no intervention yet. It is not
+            // a failure; setter/readback failures arrive as events or degraded state.
+            let unhealthy = gpu.freshness != "fresh" || gpu.protection.state == "degraded";
             let fingerprint = if unhealthy {
                 format!("{}:{}", gpu.freshness, gpu.protection.state)
             } else {
@@ -212,7 +211,7 @@ impl Manager {
                         incident: "health".into(),
                         identity: format!("health:{}:{fingerprint}", frame.daemon_instance),
                         summary: format!(
-                            "{}GPU protection unavailable/unverified",
+                            "{}GPU protection unavailable",
                             if gpu.protection.mode == Mode::DryRun {
                                 "SIMULATION — "
                             } else {

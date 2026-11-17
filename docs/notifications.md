@@ -46,8 +46,10 @@ second invocation with `--test`. No shared privileged session selector is involv
   acknowledgements, with observed response pending. `action_verified` can report
   observed throttling after settling; unavailable/exceeded readback reports failure.
   A partial fallback is a failure notice, never a success.
-- Failed intervention, degraded/stale telemetry, unverified active protection, or
-  a sustained daemon disconnection: critical urgency with a concise reason.
+- Failed intervention, degraded/stale telemetry, or sustained daemon disconnection:
+  critical urgency with a concise reason. Fresh `armed_unverified`/armed monitoring
+  is normal before an intervention and does not generate a warning by itself.
+  Historical failed or uncertain actions are still reconciled on connection.
 - Dry-run proposals: clearly labeled **SIMULATION**. Synthetic-backend applied
   events are also simulations; they do not represent real GPU changes.
 - Monitoring/connection recovery: normal urgency, explicitly says no power caps
