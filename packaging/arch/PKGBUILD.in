@@ -1,0 +1,45 @@
+# Local template: scripts/package-arch.py supplies the version and source checksum.
+pkgname=pinwatch
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='ASUS Astral GPU connector monitoring and optional current-triggered protection'
+arch=('x86_64' 'aarch64')
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'systemd')
+makedepends=('cargo' 'rust>=@MSRV@')
+optdepends=('nvidia-utils: host NVML library for real NVIDIA GPU telemetry')
+backup=('etc/pinwatch/pinwatch.toml')
+options=('!debug')
+source=("pinwatch-${pkgver}.tar.gz")
+sha256sums=('@SOURCE_SHA256@')
+
+prepare() {
+  cd "${srcdir}/pinwatch-${pkgver}"
+  cargo fetch --locked
+}
+
+build() {
+  cd "${srcdir}/pinwatch-${pkgver}"
+  cargo build --frozen --release --bins
+}
+
+check() {
+  cd "${srcdir}/pinwatch-${pkgver}"
+  cargo test --frozen
+}
+
+package() {
+  cd "${srcdir}/pinwatch-${pkgver}"
+  install -Dm755 target/release/pinwatch "${pkgdir}/usr/bin/pinwatch"
+  install -Dm755 target/release/pinwatchd "${pkgdir}/usr/bin/pinwatchd"
+  install -Dm644 examples/pinwatch.toml "${pkgdir}/etc/pinwatch/pinwatch.toml"
+  install -Dm644 install/pinwatchd.service "${pkgdir}/usr/lib/systemd/system/pinwatchd.service"
+  install -Dm644 install/pinwatch-notify.service "${pkgdir}/usr/lib/systemd/user/pinwatch-notify.service"
+  sed -i 's|/usr/local/bin/|/usr/bin/|g' \
+    "${pkgdir}/usr/lib/systemd/system/pinwatchd.service" \
+    "${pkgdir}/usr/lib/systemd/user/pinwatch-notify.service"
+  install -Dm644 packaging/arch/pinwatch.sysusers "${pkgdir}/usr/lib/sysusers.d/pinwatch.conf"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/pinwatch/LICENSE"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/pinwatch/README.md"
+  cp -r docs examples "${pkgdir}/usr/share/doc/pinwatch/"
+}

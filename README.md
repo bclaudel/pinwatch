@@ -175,6 +175,24 @@ requirements; inspect the loader's stderr, library symlink, and `ldd` output.
 Do not globally set `LD_LIBRARY_PATH=/usr/lib` inside Nix to solve this: that can
 replace unrelated Nix libraries. Builds and simulated tests never need NVML.
 
+## Local Arch package
+
+For pacman/paru-managed installation and removal without publishing to the AUR:
+
+```sh
+./scripts/package-arch.py
+# Install the resulting archive explicitly:
+sudo pacman -U ./target/arch/pinwatch-VERSION-.../pinwatch-VERSION-1-x86_64.pkg.tar.zst
+# Later, after stopping/disabling Pinwatch services:
+sudo pacman -Rns pinwatch
+```
+
+The helper builds/tests a source snapshot with Arch's native toolchain, including
+when launched from direnv's Nix environment. It never installs or activates the
+package. See [local packaging instructions](docs/arch-packaging.md) for prerequisites,
+paru commands, configuration preservation, and **migration from a manual install**
+so `/usr/local` binaries and `/etc` units do not shadow the packaged versions.
+
 ## System service installation (explicit administrator steps)
 
 Review the configuration and unit first. These commands are instructions, **not

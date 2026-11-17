@@ -110,3 +110,24 @@ No source changes were needed. Cargo.toml retains the previously established
 Rust 1.94 minimum; rust-toolchain.toml selects the development compiler.
 aarch64 was not validated, and no installed binary/service or GPU setting was
 changed during this toolchain update.
+
+## Local Arch packaging
+
+Added a local source-snapshot helper and checksummed PKGBUILD template. Arch's
+native Rust 1.100.0 built both binaries and passed all **45 tests** under makepkg.
+The sandbox initially denied the tests' Unix sockets; the package build was rerun
+outside it. No dependencies or packages were installed, and no services were
+started/enabled/restarted. The development Nix pins/Cargo.lock were unchanged.
+
+Inspected package metadata, installed paths, root ownership, 0644 configuration,
+pacman backup entry, and `/usr/bin` service commands. ELF inspection showed the
+native `/lib64/ld-linux-x86-64.so.2` interpreter and no Nix RPATH/RUNPATH; packaged
+executables ran without a Nix environment. Checked helper/PKGBUILD syntax and
+source-snapshot checksums/exclusion of runtime/build files. Systemd's installed
+pacman hooks were inspected for sysusers group creation and unit reloads.
+
+makepkg emitted a nonfatal `libfakeroot internal error: payload not recognized!`
+during the first packaging pass; the archive was still created successfully and
+its root ownership/metadata were checked. The final build completed without that
+diagnostic and its metadata/ownership were checked again. No install/remove
+transaction or clean chroot build was attempted; namcap is not installed. aarch64 remains unvalidated.
