@@ -138,10 +138,30 @@ pub async fn run(config: Config) -> Result<()> {
         let devices = backend::select(&backend.devices()?, config.gpu_uuid.as_deref(), None)?;
         let devices: Vec<_> = devices.into_iter().filter(|d| d.sensor_supported).collect();
         ensure!(!devices.is_empty(), "no supported ASUS Astral GPU found");
-        let _owners = devices
-            .iter()
-            .map(|d| Ownership::acquire(&config.lock_dir, &d.gpu_uuid))
-            .collect::<Result<Vec<_>>>()?;
+        // The socket is bound before GPU ownership. Give automatic local watchers
+        // time to see it and release their locks; never unlink/bypass a lock.
+        let ownership_started = Instant::now();
+        let _owners = loop {
+            if worker_stopping.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let result = devices
+                .iter()
+                .map(|d| Ownership::acquire(&config.lock_dir, &d.gpu_uuid))
+                .collect::<Result<Vec<_>>>();
+            match result {
+                Ok(owners) => break owners,
+                Err(error)
+                    if ownership_started.elapsed() < Duration::from_secs(6)
+                        && error
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|e| e.kind() == std::io::ErrorKind::WouldBlock) =>
+                {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => return Err(error).context("GPU polling ownership unavailable"),
+            }
+        };
         let instance = uuid::Uuid::new_v4().to_string();
         let mut journal = Journal::open(&config.state_file, &instance)?;
         let mut engines: Vec<_> = devices

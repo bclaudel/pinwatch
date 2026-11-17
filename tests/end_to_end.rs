@@ -108,7 +108,7 @@ async fn daemon_cli_simulated_intervention_and_clean_shutdown() {
     assert!(!duplicate.status.success());
     assert!(socket.exists());
     let conflict = Command::new(env!("CARGO_BIN_EXE_pinwatch"))
-        .args(["--direct", "--simulate"])
+        .arg("--simulate")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/overload.json"))
         .arg("--lock-dir")
         .arg(dir.path())
@@ -171,10 +171,10 @@ async fn dryrun_proposes_but_never_applies_and_watch_is_ndjson() {
     terminate(&mut process, &socket).await;
 }
 #[test]
-fn direct_simulation_devices_and_help() {
+fn local_simulation_devices_and_help() {
     let dir = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_pinwatch"))
-        .args(["--direct", "--simulate"])
+        .arg("--simulate")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/overload.json"))
         .arg("--lock-dir")
         .arg(dir.path())
@@ -194,7 +194,7 @@ fn direct_simulation_devices_and_help() {
 }
 
 #[test]
-fn direct_reads_config_and_cli_selection_overrides_it() {
+fn fallback_reads_config_and_cli_selection_overrides_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pinwatch.toml");
     let mut config = Config {
@@ -208,7 +208,9 @@ fn direct_reads_config_and_cli_selection_overrides_it() {
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
     let run = |extra: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_pinwatch"))
-            .args(["--direct", "--config"])
+            .args(["--socket"])
+            .arg(dir.path().join("missing.sock"))
+            .arg("--config")
             .arg(&path)
             .args(extra)
             .args(["status", "--json"])
@@ -240,4 +242,142 @@ fn direct_reads_config_and_cli_selection_overrides_it() {
     assert!(!run(&[]).status.success());
     std::fs::remove_file(&path).unwrap();
     assert!(!run(&[]).status.success()); // explicit missing configuration never silently falls back
+}
+
+#[tokio::test]
+async fn automatic_status_prefers_daemon_without_loading_local_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut daemon, socket) = launch(dir.path(), Mode::Monitor);
+    ready(&socket).await;
+    // A broken local fallback config must not prevent cached daemon monitoring.
+    let bad = dir.path().join("bad.toml");
+    std::fs::write(&bad, "bad = true").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_pinwatch"))
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--config")
+        .arg(&bad)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame: Frame = serde_json::from_slice(&output.stdout).unwrap();
+    assert_ne!(frame.daemon_instance, "direct-read-only");
+    // Local overrides do not create a second sensor poller when IPC is available.
+    let output = Command::new(env!("CARGO_BIN_EXE_pinwatch"))
+        .arg("--socket")
+        .arg(&socket)
+        .args(["--adapter", "99", "devices", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    terminate(&mut daemon, &socket).await;
+}
+
+#[tokio::test]
+async fn automatic_watch_hands_off_between_local_and_restarted_daemon() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut daemon, socket) = launch(dir.path(), Mode::Monitor);
+    ready(&socket).await;
+    let mut watcher = Process(
+        Command::new(env!("CARGO_BIN_EXE_pinwatch"))
+            .arg("--socket")
+            .arg(&socket)
+            .arg("--config")
+            .arg(dir.path().join("pinwatch.toml"))
+            .args(["watch", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let stdout = watcher.0.stdout.take().unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+    let parser = tokio::task::spawn_blocking(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stdout).lines() {
+            let frame: Frame = serde_json::from_str(&line.unwrap()).unwrap();
+            if tx.blocking_send(frame).is_err() {
+                break;
+            }
+        }
+    });
+    let first = tokio::time::timeout(Duration::from_secs(4), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(first.daemon_instance, "direct-read-only");
+    terminate(&mut daemon, &socket).await;
+    let local = tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let frame = rx.recv().await.unwrap();
+            if frame.daemon_instance == "direct-read-only" {
+                break frame;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(local.gpus[0].protection.mode, Mode::Monitor);
+    assert!(!local.gpus[0].protection.effective);
+    assert_eq!(local.gpus[0].reading.power_limit_w, Some(600.0));
+    let (mut restarted, _) = launch(dir.path(), Mode::Monitor);
+    let recovered = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let frame = rx.recv().await.unwrap();
+            if frame.daemon_instance != "direct-read-only" {
+                break frame;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(recovered.daemon_instance, first.daemon_instance);
+    assert!(watcher.0.try_wait().unwrap().is_none());
+    drop(watcher);
+    drop(rx);
+    parser.await.unwrap();
+    terminate(&mut restarted, &socket).await;
+}
+
+#[tokio::test]
+async fn incompatible_and_malformed_daemons_do_not_trigger_hardware_fallback() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    for response in ["not json\n", "{\"schema_version\":99}\n"] {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            reader.read_line(&mut request).await.unwrap();
+            reader
+                .get_mut()
+                .write_all(response.as_bytes())
+                .await
+                .unwrap();
+        });
+        let command = Command::new(env!("CARGO_BIN_EXE_pinwatch"))
+            .arg("--socket")
+            .arg(&socket)
+            .arg("--config")
+            .arg(dir.path().join("must-not-be-read.toml"))
+            .args(["status", "--json"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = tokio::task::spawn_blocking(move || command.wait_with_output().unwrap())
+            .await
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("read local configuration"));
+        server.await.unwrap();
+    }
 }

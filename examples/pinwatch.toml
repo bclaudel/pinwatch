@@ -13,7 +13,7 @@ state_file = "/var/lib/pinwatch/history.json"
 # Optional trusted, absolute NVML path. Normally the Arch fallback works automatically.
 # nvml_library = "/usr/lib/libnvidia-ml.so.1"
 
-# Populate using `pinwatch --direct devices`; never guess from an NVML index.
+# Populate using `pinwatch devices`; never guess from an NVML index.
 # With several PCI-local adapters, Pinwatch refuses to choose silently.
 [adapters]
 # "GPU-your-uuid" = 1

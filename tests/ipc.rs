@@ -281,3 +281,46 @@ async fn notifier_transport_drains_fast_frames_and_reconnects_without_desktop() 
     stop_tx.send(true).unwrap();
     server.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn automatic_connection_only_falls_back_for_absent_or_stale_sockets() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("daemon.sock");
+    assert!(
+        ipc::connect_if_running(&path, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    drop(listener);
+    assert!(
+        ipc::connect_if_running(&path, false)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "not a socket").unwrap();
+    assert!(ipc::connect_if_running(&path, false).await.is_err());
+}
+
+#[tokio::test]
+async fn automatic_connection_keeps_permission_errors_visible() {
+    let dir = tempfile::tempdir().unwrap();
+    let locked = dir.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let result = ipc::connect_if_running(&locked.join("daemon.sock"), false).await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        result
+            .err()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+}

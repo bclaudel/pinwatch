@@ -19,8 +19,8 @@ use std::{
     about = "ASUS Astral GPU connector telemetry; read-only CLI and desktop companion"
 )]
 struct Args {
-    /// Direct-mode configuration; otherwise use /etc/pinwatch/pinwatch.toml if present.
-    #[arg(long, global = true, requires = "direct")]
+    /// Local fallback configuration; default: /etc/pinwatch/pinwatch.toml if present.
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[arg(long, global = true, default_value = "/run/pinwatch/pinwatch.sock")]
     socket: PathBuf,
@@ -28,14 +28,11 @@ struct Args {
     uuid: Option<String>,
     #[arg(long, global = true)]
     index: Option<u32>,
-    /// Explicit read-only hardware access. Requires exclusive per-GPU ownership.
+    /// Force local simulation from a fixture, bypassing the daemon.
     #[arg(long, global = true)]
-    direct: bool,
-    /// Replay fixture instead of hardware (requires --direct).
-    #[arg(long, global = true, requires = "direct")]
     simulate: Option<PathBuf>,
-    /// Explicit PCI-local adapter (requires --direct and a single selected GPU).
-    #[arg(long, global = true, requires = "direct")]
+    /// PCI-local adapter override for fallback (requires a single selected GPU).
+    #[arg(long, global = true)]
     adapter: Option<u32>,
     #[arg(long, global = true)]
     lock_dir: Option<PathBuf>,
@@ -51,7 +48,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// One cached snapshot; no I2C polling unless --direct was explicitly specified.
+    /// One snapshot from the daemon, or read-only hardware access if it is absent.
     Status {
         #[arg(long)]
         json: bool,
@@ -176,7 +173,14 @@ fn filter_frame(mut frame: Frame, args: &Args) -> Result<Frame> {
 }
 async fn run(args: Args) -> Result<()> {
     if let Command::Notify { test } = &args.command {
-        ensure!(!args.direct, "notify uses daemon IPC only");
+        ensure!(
+            args.config.is_none()
+                && args.simulate.is_none()
+                && args.adapter.is_none()
+                && args.lock_dir.is_none()
+                && args.nvml_library.is_none(),
+            "notify uses daemon IPC only; local monitoring options are not supported"
+        );
         return notify::run(&args.socket, *test).await;
     }
     let (json, continuous) = match args.command {
@@ -184,20 +188,48 @@ async fn run(args: Args) -> Result<()> {
         Command::Watch { json } => (json, true),
         _ => unreachable!(),
     };
-    if !args.direct {
-        let mut reader = ipc::connect(&args.socket, continuous).await?;
-        loop {
-            let frame = filter_frame(ipc::next_frame(&mut reader).await?, &args)?;
-            if matches!(args.command, Command::Devices { .. }) {
-                return show_devices(frame.gpus.into_iter().map(|g| g.device).collect(), json);
-            }
-            display(&frame, json)?;
-            if !continuous {
-                return Ok(());
+    let mut reader = if args.simulate.is_some() {
+        None
+    } else {
+        ipc::connect_if_running(&args.socket, continuous).await?
+    };
+    loop {
+        if let Some(mut stream) = reader.take() {
+            eprintln!("Using pinwatchd at {}", args.socket.display());
+            loop {
+                let frame = match ipc::next_frame(&mut stream).await {
+                    Ok(frame) => filter_frame(frame, &args)?,
+                    Err(error) if continuous && ipc::disconnected(&error) => {
+                        eprintln!("Daemon disconnected; trying read-only local monitoring");
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
+                if matches!(args.command, Command::Devices { .. }) {
+                    return show_devices(frame.gpus.into_iter().map(|g| g.device).collect(), json);
+                }
+                display(&frame, json)?;
+                if !continuous {
+                    return Ok(());
+                }
             }
         }
+        eprintln!(
+            "Using read-only local monitoring; daemon protection is unavailable through this source"
+        );
+        reader = monitor_locally(&args, json, continuous).await?;
+        if reader.is_none() {
+            return Ok(());
+        }
     }
-    let mut config = direct_config(&args)?;
+}
+
+async fn monitor_locally(
+    args: &Args,
+    json: bool,
+    continuous: bool,
+) -> Result<Option<tokio::io::BufReader<tokio::net::UnixStream>>> {
+    let mut config = local_config(args)?;
     if config.simulate.is_none() {
         ensure!(
             config.lock_dir == std::path::Path::new("/run/pinwatch"),
@@ -224,14 +256,45 @@ async fn run(args: Args) -> Result<()> {
         devices[0].sensor_error = None;
     }
     if matches!(args.command, Command::Devices { .. }) {
-        return show_devices(devices, json);
+        show_devices(devices, json)?;
+        return Ok(None);
     }
-    let _locks = devices
-        .iter()
-        .map(|d| ipc::Ownership::acquire(&config.lock_dir, &d.gpu_uuid))
-        .collect::<Result<Vec<_>>>()?;
+    let ownership_started = Instant::now();
+    let _locks = loop {
+        let ownership = devices
+            .iter()
+            .map(|d| ipc::Ownership::acquire(&config.lock_dir, &d.gpu_uuid))
+            .collect::<Result<Vec<_>>>();
+        match ownership {
+            Ok(locks) => break locks,
+            Err(error) => {
+                // During shutdown/startup, the socket and GPU locks change at
+                // different instants. Retry briefly without ever bypassing ownership.
+                if args.simulate.is_none() {
+                    if let Some(reader) = ipc::connect_if_running(&args.socket, continuous).await? {
+                        return Ok(Some(reader));
+                    }
+                    if ownership_started.elapsed() < Duration::from_secs(6)
+                        && error
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|e| e.kind() == std::io::ErrorKind::WouldBlock)
+                    {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        continue;
+                    }
+                }
+                return Err(error)
+                    .context("cannot acquire local GPU ownership; another poller may be running");
+            }
+        }
+    };
     let mut sequence = 0;
     loop {
+        if args.simulate.is_none()
+            && let Some(reader) = ipc::connect_if_running(&args.socket, continuous).await?
+        {
+            return Ok(Some(reader)); // Drop local GPU locks before waiting for daemon telemetry.
+        }
         sequence += 1;
         let mut gpus = vec![];
         let mut sample_times = vec![];
@@ -271,15 +334,29 @@ async fn run(args: Args) -> Result<()> {
         frame.refresh(0);
         display(&frame, json)?;
         if !continuous {
-            return Ok(());
+            return Ok(None);
         }
-        tokio::time::sleep(Duration::from_millis(config.poll_interval_ms)).await;
+        let next_poll = Instant::now() + Duration::from_millis(config.poll_interval_ms);
+        loop {
+            tokio::time::sleep(
+                Duration::from_millis(200).min(next_poll.saturating_duration_since(Instant::now())),
+            )
+            .await;
+            if args.simulate.is_none()
+                && let Some(reader) = ipc::connect_if_running(&args.socket, true).await?
+            {
+                return Ok(Some(reader));
+            }
+            if Instant::now() >= next_poll {
+                break;
+            }
+        }
     }
 }
-fn direct_config(args: &Args) -> Result<Config> {
+fn local_config(args: &Args) -> Result<Config> {
     let mut config = if let Some(path) = &args.config {
         Config::read(path)
-            .with_context(|| format!("read direct configuration {}", path.display()))?
+            .with_context(|| format!("read local configuration {}", path.display()))?
     } else if args.simulate.is_some() {
         // Explicit fixture runs are independent of the installed hardware configuration.
         Config::default()

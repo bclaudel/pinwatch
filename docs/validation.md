@@ -131,3 +131,23 @@ during the first packaging pass; the archive was still created successfully and
 its root ownership/metadata were checked. The final build completed without that
 diagnostic and its metadata/ownership were checked again. No install/remove
 transaction or clean chroot build was attempted; namcap is not installed. aarch64 remains unvalidated.
+
+## Automatic source selection
+
+Removed the CLI `--direct` switch. Status/watch/devices prefer daemon IPC, with
+read-only fallback for an absent/refused socket. Permission errors, malformed or
+incompatible responses, and timeouts do not silently bypass the daemon. Explicit
+`--simulate` remains isolated from the running system daemon. Local fallback
+continues to honor the config and never executes protection controls.
+
+Pinned format, Clippy with warnings denied, all **50 tests**, and both release
+builds passed. New simulated tests cover daemon preference without reading broken
+fallback config, absent/stale sockets, non-socket paths, permission failures,
+malformed/incompatible responses, and watch handoff through daemon stop/restart.
+The handoff test exposed a shutdown race between socket closure and GPU-lock
+release; bounded lock retries now handle it without overlapping polling. CLI help
+was regenerated. No real hardware controls or installed services were changed.
+
+The updated native Arch package also built successfully and passed the same 50
+tests. Its CLI help omits `--direct` and its ELF loader is the Arch host loader.
+The archive was created without installing it or restarting the system daemon.

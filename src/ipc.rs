@@ -223,12 +223,7 @@ pub async fn connect(path: &Path, subscribe: bool) -> Result<BufReader<UnixStrea
     let mut stream = tokio::time::timeout(Duration::from_secs(3), UnixStream::connect(path))
         .await
         .context("daemon connection timed out")?
-        .with_context(|| {
-            format!(
-                "connect to {}; start pinwatchd or explicitly use --direct",
-                path.display()
-            )
-        })?;
+        .with_context(|| format!("connect to {}", path.display()))?;
     let request = Request {
         schema_version: SCHEMA_VERSION,
         op: if subscribe { "subscribe" } else { "snapshot" }.into(),
@@ -241,10 +236,54 @@ pub async fn connect(path: &Path, subscribe: bool) -> Result<BufReader<UnixStrea
 pub async fn next_frame(reader: &mut BufReader<UnixStream>) -> Result<Frame> {
     let bytes = tokio::time::timeout(Duration::from_secs(8), line(reader, MAX_FRAME_BYTES))
         .await??
-        .context("daemon disconnected")?;
+        .ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "daemon disconnected")
+        })?;
     let frame: Frame = serde_json::from_slice(&bytes)?;
     if frame.schema_version != SCHEMA_VERSION {
         bail!("unsupported daemon schema version");
     }
     Ok(frame)
+}
+
+/// Only an absent/refused endpoint permits automatic hardware fallback. An
+/// inaccessible, malformed, incompatible, or unresponsive daemon remains an error.
+pub async fn connect_if_running(
+    path: &Path,
+    subscribe: bool,
+) -> Result<Option<BufReader<UnixStream>>> {
+    match connect(path, subscribe).await {
+        Ok(reader) => Ok(Some(reader)),
+        Err(error)
+            if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                matches!(
+                    e.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                )
+            }) =>
+        {
+            match std::fs::symlink_metadata(path) {
+                Ok(meta) => ensure!(
+                    meta.file_type().is_socket(),
+                    "daemon endpoint exists but is not a socket: {}",
+                    path.display()
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub fn disconnected(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+        matches!(
+            e.kind(),
+            std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::BrokenPipe
+        )
+    })
 }

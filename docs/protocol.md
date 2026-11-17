@@ -94,8 +94,19 @@ Each GPU snapshot contains:
   them. See [policy semantics](protection.md).
 
 `devices --json` instead emits `{schema_version:1, kind:"devices", devices:[...]}`.
-By default it uses the daemon's cached supported devices; `--direct devices` queries
-all NVML GPUs/capabilities without touching I²C, including unsupported hardware.
+It uses the daemon's cached supported devices when connected; when the daemon is
+absent, it queries all NVML GPUs/capabilities without touching I²C, including
+unsupported hardware. `--direct` has been removed; source selection is automatic.
+Local telemetry retains the v1 `daemon_instance` value `direct-read-only`, with
+monitor mode, no intervention events and `protection.effective=false`.
+
+`watch --json` can change source within one stream: check `daemon_instance` along
+with `sample_sequence`, since sequence numbers are per source/run. A clean daemon
+EOF/reset triggers read-only fallback, subject to exclusive GPU ownership and
+local permissions. A local watcher releases ownership on seeing the daemon socket;
+the daemon allows six seconds for that handoff. Protocol errors and timeouts
+remain errors, not a reason to start a competing hardware poller. The notifier
+always uses daemon IPC; it never falls back to hardware.
 
 ## Event contract
 

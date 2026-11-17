@@ -52,7 +52,7 @@ Installation does not start services, add users to groups, or change GPU setting
 ### Configure and start
 
 ```sh
-pinwatch --direct devices
+pinwatch devices
 sudoedit /etc/pinwatch/pinwatch.toml
 ```
 
@@ -183,7 +183,7 @@ For a single read-only simulated snapshot:
 
 ```sh
 runtime=$(mktemp -d /tmp/pinwatch-direct.XXXXXX)
-./target/debug/pinwatch --direct --simulate fixtures/overload.json \
+./target/debug/pinwatch --simulate fixtures/overload.json \
   --lock-dir "$runtime" status --json
 ```
 
@@ -195,9 +195,9 @@ never invoked by the test suite.
 ## CLI and ownership
 
 ```sh
-# Read-only NVML enumeration; does not read I²C or require the daemon:
-pinwatch --direct devices --json
-# Normal usage: cached daemon telemetry, no extra sensor polling:
+# Device discovery: daemon cache when available, otherwise read-only NVML:
+pinwatch devices --json
+# Snapshots and monitoring select the available source automatically:
 pinwatch devices
 pinwatch --uuid GPU-your-uuid status --json
 pinwatch --index 0 status
@@ -212,11 +212,23 @@ connector total, configured cap, separate power/current balance ratios, freshnes
 and protection status. See [example output](examples/status.txt),
 [JSON snapshot](examples/telemetry.json), and [CLI help](docs/cli-help.txt).
 Diagnostics are on stderr; JSON stdout has one complete, promptly flushed object
-per line and no ANSI codes. `watch` exits on daemon disconnect; supervise/restart
-it and mark UI data unavailable. `notify` handles its own IPC reconnection.
+per line and no ANSI codes. `status`, `watch`, and `devices` prefer the daemon.
+If its socket is absent or refuses connections, they fall back to read-only local
+access. Permission errors, protocol errors and timeouts are reported rather than
+hidden by fallback. Source changes are reported on stderr; local frames identify
+`daemon_instance = "direct-read-only"` and always have `protection.effective=false`.
+There is no `--direct` option.
+
+`watch` switches to local monitoring if the daemon disconnects and hands polling
+back when it returns. It checks for the daemon roughly every 200 ms between local
+polls, dropping its GPU locks before waiting for daemon telemetry. Both sides allow
+up to six seconds for ownership handoff, then report a conflicting poller. A blocked
+hardware call may delay handoff. If fallback lacks device/lock permissions, the
+command exits with an error; UI consumers must mark data unavailable on exit.
+`notify` remains daemon-only and handles its own IPC reconnection.
 
 The daemon normally owns polling and shares cached frames with all CLI/Quickshell
-clients. Direct monitoring is explicitly **read-only**, needs device permissions,
+clients. Local fallback is always **read-only**, needs device permissions,
 and must hold the same per-UUID exclusive advisory lock in `/run/pinwatch` as the
 daemon. Real-hardware lock-directory overrides are rejected. Multiple Pinwatch
 pollers cannot coexist for one UUID. Never remove live lock files/directories;
@@ -228,25 +240,28 @@ One adapter can be selected automatically. None gives an error; **multiple adapt
 require an explicit UUID-to-adapter mapping**. The old lowest-number heuristic is
 not used. An override must belong to that GPU; no arbitrary bus scanning or sensor
 register writes are performed. Read-only I²C access still needs read/write open
-permission for the kernel ioctl interface. Direct use after provisioning:
+permission for the kernel ioctl interface. Explicit fallback selection after provisioning:
 
 ```sh
 # Example only: choose the adapter from known hardware/reference information.
 # The daemon must be stopped and /run/pinwatch must exist with safe permissions.
-sudo pinwatch --direct --uuid GPU-your-uuid --adapter 1 status
+sudo pinwatch --uuid GPU-your-uuid --adapter 1 status
 ```
 
-Direct mode automatically reads `/etc/pinwatch/pinwatch.toml` when present, using
-its `gpu_uuid`, `[adapters]` mappings, polling/freshness settings and NVML path.
-With the mapping configured, simply run `pinwatch --direct status` or
-`pinwatch --direct watch`. Use `--config /path/to/pinwatch.toml` for a different
-file. Explicit `--uuid` or `--index` overrides the configured GPU; `--adapter`
-overrides its adapter. Direct mode remains read-only even if the file says
-`mode = "active"`. An absent default file uses built-in defaults; unreadable or
-invalid files and explicitly requested missing files produce errors. Explicit
-`--simulate` skips the default system file for reproducible fixture runs (an
-explicit `--config` is still honored). Daemon-backed commands keep using cached
-IPC and the daemon's configuration.
+Local fallback reads `/etc/pinwatch/pinwatch.toml` when present, including its
+`gpu_uuid`, `[adapters]` mappings, polling/freshness settings and NVML path. With
+the mapping configured, simply run `pinwatch status` or `pinwatch watch` regardless
+of whether the daemon is running. `--config /path/to/pinwatch.toml`, `--adapter`,
+`--nvml-library`, and `--lock-dir` affect local fallback only; daemon-backed reads
+use the daemon's settings. `--uuid` / `--index` filter either source and override
+local configuration selection. Local monitoring remains read-only even if the
+file says `mode = "active"`.
+
+An absent default config uses built-in defaults; unreadable/invalid files and
+explicitly requested missing files produce errors when fallback is needed. The
+CLI does not need to read local config when using the daemon. `--simulate` forces
+local simulation, bypassing the daemon and default config for reproducible fixture
+runs (an explicit `--config` is still honored).
 
 Do not use `i2cdetect` or sweep adapters to discover this sensor. On this host,
 read-only NVML discovery found adapters 1–7, so Pinwatch intentionally declined to
