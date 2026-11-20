@@ -108,6 +108,8 @@ pub struct Manager {
     disconnect_announced: bool,
     health: HashMap<String, String>,
     instance: Option<String>,
+    unhealthy_since: HashMap<String, u64>,
+    health_announced: HashSet<String>,
 }
 impl Manager {
     fn remember(&mut self, id: &str) -> bool {
@@ -172,6 +174,7 @@ impl Manager {
                     .or(gpu.protection.historical_restriction.as_ref());
                 if let Some(e) = event
                     && self.remember(&e.event_id)
+                    && e.kind != "protection_unavailable"
                     && let Some(n) = map_event(e, true)
                 {
                     self.queue(n, now);
@@ -183,6 +186,8 @@ impl Manager {
         } else {
             for e in &frame.recent_events {
                 if self.remember(&e.event_id)
+                    // Health notices follow current state, not obsolete event history.
+                    && !matches!(e.kind.as_str(), "protection_unavailable" | "monitoring_recovered")
                     && let Some(n) = map_event(e, false)
                 {
                     self.queue(n, now);
@@ -201,9 +206,27 @@ impl Manager {
             let previous = self
                 .health
                 .insert(gpu.device.gpu_uuid.clone(), fingerprint.clone());
-            if previous.as_ref() != Some(&fingerprint)
-                && unhealthy
-                && !self.pending.contains_key(&gpu.device.gpu_uuid)
+            let uuid = &gpu.device.gpu_uuid;
+            let since = if unhealthy {
+                *self.unhealthy_since.entry(uuid.clone()).or_insert(now)
+            } else {
+                self.unhealthy_since.remove(uuid);
+                // A health warning that never reached the desktop is now obsolete.
+                if self
+                    .pending
+                    .get(uuid)
+                    .is_some_and(|n| n.incident == "health")
+                {
+                    self.pending.remove(uuid);
+                }
+                now
+            };
+            // Notification-only grace covers short resume/driver transitions. Hardware
+            // monitoring, intervention failures and the event log remain immediate.
+            if unhealthy
+                && now.saturating_sub(since) >= 3000
+                && !self.health_announced.contains(uuid)
+                && !self.pending.contains_key(uuid)
             {
                 self.queue(
                     Notice {
@@ -229,6 +252,7 @@ impl Manager {
                 );
             } else if previous.is_some_and(|p| p != "available")
                 && !unhealthy
+                && self.health_announced.remove(uuid)
                 && !self.pending.contains_key(&gpu.device.gpu_uuid)
             {
                 self.queue(Notice { key:gpu.device.gpu_uuid.clone(), incident:"recovery".into(), identity:format!("health-recovery:{now}"),summary:"GPU monitoring restored".into(),body:escape(&format!("{}: telemetry is available again. Power limits and clocks were not restored; check current protection state.",gpu.device.gpu_uuid)),urgency:1,severity:0 },now);
@@ -262,6 +286,9 @@ impl Manager {
     }
     pub fn delivered(&mut self, key: &str, id: u32, now: u64) {
         if let Some(n) = self.pending.remove(key) {
+            if n.severity == 3 {
+                self.health_announced.insert(key.into());
+            }
             self.last_sent
                 .insert(key.into(), (now, n.severity, n.body, n.incident));
             self.replacements.insert(key.into(), id);

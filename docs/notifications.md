@@ -52,7 +52,8 @@ second invocation with `--test`. No shared privileged session selector is involv
   Historical failed or uncertain actions are still reconciled on connection.
 - Dry-run proposals: clearly labeled **SIMULATION**. Synthetic-backend applied
   events are also simulations; they do not represent real GPU changes.
-- Monitoring/connection recovery: normal urgency, explicitly says no power caps
+- Monitoring recovery is announced only after a warning reached the notification
+  server. Connection recovery: normal urgency, explicitly says no power caps
   or clocks were restored. There are no notification actions to restore settings
   or disable protection.
 
@@ -61,6 +62,13 @@ The D-Bus `Notify` request asks for critical urgency where appropriate and
 body markup. These express intent, **not guaranteed delivery, visibility, sound,
 history retention, or persistence**. The notification server controls presentation
 and DND. A Quickshell shell decides how to expose and retain received notifications.
+
+Short telemetry outages (including suspend/resume transitions) have a three-second
+notification grace period. Recovered outages in the event history do not produce
+obsolete warnings or recovery popups. This delays only desktop health notices;
+monitoring, protection decisions, intervention failure notices, and journald events
+remain immediate. A pending health warning is discarded if telemetry recovers
+before delivery.
 
 ## Deduplication, replacement, restart
 

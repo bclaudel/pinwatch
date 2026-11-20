@@ -244,6 +244,8 @@ fn stale_cached_sample_is_not_an_all_clear() {
     assert!(!f.gpus[0].protection.effective);
     let mut m = Manager::default();
     m.ingest(&f, 0, true);
+    assert!(m.pending.is_empty());
+    m.ingest(&f, 3000, false);
     assert_eq!(m.pending["GPU-TEST"].urgency, 2);
 }
 #[test]
@@ -328,5 +330,73 @@ fn clock_notifications_distinguish_acknowledgement_from_observed_response() {
             .unwrap()
             .summary
             .contains("failed")
+    );
+}
+
+#[tokio::test]
+async fn resume_health_events_do_not_replay_obsolete_popups() {
+    let mut m = Manager::default();
+    let mut sink = MockSink::default();
+    m.ingest(&frame(vec![], "armed_unverified"), 0, true);
+    let events = vec![
+        event("protection_unavailable", 1),
+        event("monitoring_recovered", 2),
+    ];
+    m.ingest(&frame(events, "armed_unverified"), 1000, false);
+    notify::deliver_pending(&mut m, &mut sink, 1000)
+        .await
+        .unwrap();
+    assert!(sink.sent.is_empty());
+    m.ingest(&frame(vec![], "degraded"), 2000, false);
+    m.ingest(&frame(vec![], "armed_unverified"), 2028, false);
+    assert!(m.pending.is_empty());
+    m.server_restarted();
+    assert!(m.pending.is_empty());
+}
+
+#[tokio::test]
+async fn sustained_health_failure_warns_and_only_delivered_warnings_recover() {
+    let mut m = Manager::default();
+    let mut sink = MockSink::default();
+    m.ingest(&frame(vec![], "degraded"), 0, true);
+    m.ingest(&frame(vec![], "degraded"), 3000, false);
+    assert_eq!(m.pending["GPU-TEST"].urgency, 2);
+    // An unavailable desktop must not receive obsolete warnings or recovery.
+    m.ingest(&frame(vec![], "armed_unverified"), 4000, false);
+    assert!(m.pending.is_empty());
+    m.ingest(&frame(vec![], "degraded"), 5000, false);
+    m.ingest(&frame(vec![], "degraded"), 8000, false);
+    notify::deliver_pending(&mut m, &mut sink, 8000)
+        .await
+        .unwrap();
+    m.ingest(&frame(vec![], "armed_unverified"), 9000, false);
+    notify::deliver_pending(&mut m, &mut sink, 9000)
+        .await
+        .unwrap();
+    assert_eq!(sink.sent.len(), 2);
+    assert!(sink.sent[1].0.summary.contains("restored"));
+    m.ingest(&frame(vec![], "armed_unverified"), 10000, false);
+    assert!(m.pending.is_empty());
+}
+
+#[test]
+fn intervention_failure_bypasses_health_grace() {
+    let mut m = Manager::default();
+    m.ingest(&frame(vec![], "armed_unverified"), 0, true);
+    m.ingest(
+        &frame(vec![event("action_failed", 1)], "degraded"),
+        1,
+        false,
+    );
+    assert!(
+        m.pending["GPU-TEST"]
+            .summary
+            .contains("intervention failed")
+    );
+    m.ingest(&frame(vec![], "armed_unverified"), 2, false);
+    assert!(
+        m.pending["GPU-TEST"]
+            .summary
+            .contains("intervention failed")
     );
 }
