@@ -78,19 +78,22 @@ impl NotificationSink for MockSink {
 }
 #[test]
 fn mappings_do_not_announce_unconfirmed_actions() {
-    assert!(notify::map_event(&event("action_requested", 1), false).is_none());
-    assert!(notify::map_event(&event("overload_detected", 1), false).is_none());
-    let notice = notify::map_event(&event("action_applied", 2), false).unwrap();
+    assert!(notify::map_event(&event("action_requested", 1), false, "Astral RTX 5090").is_none());
+    assert!(notify::map_event(&event("overload_detected", 1), false, "Astral RTX 5090").is_none());
+    let notice = notify::map_event(&event("action_applied", 2), false, "Astral RTX 5090").unwrap();
     assert!(notice.summary.contains("reduced"));
-    assert!(notice.body.contains("494.307"));
+    assert_eq!(
+        notice.body,
+        "Astral RTX 5090 · 600 → 494 W.\nChannel 2 reached 9.10 A (limit 8.50 A)."
+    );
     assert_eq!(notice.urgency, 2);
     let mut e = event("action_proposed", 3);
     e.simulation = true;
     assert!(
-        notify::map_event(&e, false)
+        notify::map_event(&e, false, "Astral RTX 5090")
             .unwrap()
             .summary
-            .starts_with("SIMULATION")
+            .starts_with("Simulation · ")
     );
     let mut e = event("action_failed", 4);
     e.outcome
@@ -99,17 +102,22 @@ fn mappings_do_not_announce_unconfirmed_actions() {
         .errors
         .push("permission denied".into());
     assert!(
-        notify::map_event(&e, false)
+        notify::map_event(&e, false, "Astral RTX 5090")
             .unwrap()
             .body
-            .contains("permission denied")
+            .contains("Couldn’t verify the requested power limit.")
     );
     let mut e = event("action_applied", 5);
     e.action = Some(Action::ClockThrottle {
         graphics_mhz: 210,
         memory_mhz: 405,
     });
-    assert_eq!(notify::map_event(&e, false).unwrap().severity, 2);
+    assert_eq!(
+        notify::map_event(&e, false, "Astral RTX 5090")
+            .unwrap()
+            .severity,
+        2
+    );
 }
 #[tokio::test]
 async fn dedup_replacement_rate_limit_and_escalation() {
@@ -174,7 +182,7 @@ async fn replay_only_latest_relevant_and_reconnect_deduplicates() {
         .await
         .unwrap();
     assert_eq!(sink.sent.len(), 1);
-    assert!(sink.sent[0].0.summary.contains("Historical"));
+    assert!(sink.sent[0].0.summary.starts_with("Earlier · "));
     assert_eq!(sink.sent[0].0.identity, "daemon-a:3");
     manager.ingest(&f, 1000, true);
     assert!(manager.pending.is_empty());
@@ -229,7 +237,7 @@ fn sustained_disconnect_single_notice_then_recovery() {
     assert!(
         m.pending["daemon"]
             .body
-            .contains("no power limits or clocks were restored")
+            .contains("Existing limits remain in place.")
     );
     assert_eq!(
         (0..7).map(notify::backoff_ms).collect::<Vec<_>>(),
@@ -254,14 +262,15 @@ fn daemon_restart_exposes_persistent_uncertain_action() {
     f.gpus[0].protection.historical_restriction = Some(event("action_requested", 1));
     let mut m = Manager::default();
     m.ingest(&f, 0, true);
-    assert!(m.pending["GPU-TEST"].summary.contains("outcome unknown"));
+    assert!(m.pending["GPU-TEST"].summary.contains("action unconfirmed"));
 }
 #[test]
 fn markup_is_escaped_and_no_restore_actions_exist() {
     let mut e = event("action_failed", 1);
     e.detail = "<b>unsafe & wrong</b>".into();
-    let n = notify::map_event(&e, false).unwrap();
-    assert!(n.body.contains("&lt;b&gt;unsafe &amp; wrong&lt;/b&gt;"));
+    let n = notify::map_event(&e, false, "<Astral & test>").unwrap();
+    assert!(n.body.starts_with("&lt;Astral &amp; test&gt;"));
+    assert!(!n.body.contains("unsafe"));
 }
 
 #[tokio::test]
@@ -314,19 +323,19 @@ fn clock_notifications_distinguish_acknowledgement_from_observed_response() {
         graphics_mhz: 180,
         memory_mhz: 405,
     });
-    let requested = notify::map_event(&e, false).unwrap();
+    let requested = notify::map_event(&e, false, "Astral RTX 5090").unwrap();
     assert!(requested.summary.contains("requested"));
-    assert!(requested.body.contains("setter acknowledged"));
+    assert!(requested.body.contains("Driver accepted the request."));
     e.kind = "action_verified".into();
     assert!(
-        notify::map_event(&e, false)
+        notify::map_event(&e, false, "Astral RTX 5090")
             .unwrap()
             .summary
-            .contains("observed")
+            .contains("confirmed")
     );
     e.kind = "action_failed".into();
     assert!(
-        notify::map_event(&e, false)
+        notify::map_event(&e, false, "Astral RTX 5090")
             .unwrap()
             .summary
             .contains("failed")
@@ -391,12 +400,12 @@ fn intervention_failure_bypasses_health_grace() {
     assert!(
         m.pending["GPU-TEST"]
             .summary
-            .contains("intervention failed")
+            .contains("protection action failed")
     );
     m.ingest(&frame(vec![], "armed_unverified"), 2, false);
     assert!(
         m.pending["GPU-TEST"]
             .summary
-            .contains("intervention failed")
+            .contains("protection action failed")
     );
 }

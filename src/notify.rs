@@ -18,83 +18,149 @@ pub struct Notice {
     pub body: String,
     pub urgency: u8,
     pub severity: u8,
+    failure_detail: Option<String>,
 }
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
-pub fn map_event(e: &Event, historical: bool) -> Option<Notice> {
-    let (summary, severity) = match (e.kind.as_str(), e.action.as_ref()) {
-        ("action_applied", Some(Action::PowerLimit { .. })) => ("GPU power limit reduced", 1),
-        ("action_applied", Some(Action::ClockThrottle { .. })) => {
-            ("GPU emergency clock restriction requested", 2)
-        }
-        ("action_verified", Some(Action::ClockThrottle { .. })) => {
-            ("GPU emergency clock throttling observed", 2)
-        }
-        ("action_failed", _) => ("GPU protective intervention failed", 3),
-        ("protection_unavailable", _) => ("GPU protection unavailable", 3),
-        ("action_proposed", _) => ("Simulated GPU intervention", 1),
-        ("action_requested", _) if historical => ("Historical GPU action: outcome unknown", 3),
-        ("monitoring_recovered", _) => ("GPU monitoring restored", 0),
-        _ => return None,
+fn gpu_label(device: &DeviceInfo, multiple: bool) -> String {
+    let model = if device.model.contains("ASTRAL-RTX5090") {
+        "Astral RTX 5090"
+    } else {
+        &device.model
     };
+    if multiple {
+        format!("{model} (GPU {})", device.index)
+    } else {
+        model.into()
+    }
+}
+
+fn power_change(previous: Option<f64>, target: f64) -> String {
+    previous.map_or_else(
+        || format!("{target:.0} W"),
+        |w| format!("{w:.0} → {target:.0} W"),
+    )
+}
+
+pub fn map_event(e: &Event, historical: bool, label: &str) -> Option<Notice> {
     let trigger = match (e.channel_id, e.current_a) {
         (Some(c), Some(a)) => format!(
-            "Channel {c} reached {a:.2} A (threshold {:.2} A). ",
+            "\nChannel {c} reached {a:.2} A (limit {:.2} A).",
             e.threshold_a
         ),
         _ => String::new(),
     };
-    let action = match (&e.action, &e.outcome) {
-        (Some(Action::PowerLimit { target_w }), Some(o)) if o.power_limit_w.is_some() => format!(
-            "Power cap: {} W → {:.3} W (requested {target_w:.3} W). ",
-            e.previous_power_cap_w
-                .map_or("unknown".into(), |p| format!("{p:.3}")),
-            o.power_limit_w.unwrap()
+    let (summary, message, severity) = match (e.kind.as_str(), e.action.as_ref()) {
+        ("action_applied", Some(Action::PowerLimit { .. })) => {
+            let watts = e.outcome.as_ref()?.power_limit_w?;
+            (
+                "GPU power limit reduced",
+                format!("{}.{trigger}", power_change(e.previous_power_cap_w, watts)),
+                1,
+            )
+        }
+        ("action_applied", Some(Action::ClockThrottle { .. })) => (
+            "GPU clock restriction requested",
+            "Driver accepted the request. Checking clock speeds.".into(),
+            2,
+        ),
+        ("action_verified", Some(Action::ClockThrottle { .. })) => (
+            "GPU clock throttling confirmed",
+            "Graphics and memory clocks reached their targets.".into(),
+            2,
+        ),
+        ("action_failed", action) => {
+            let reason = if e.detail.starts_with("sample became stale") {
+                "Readings went stale before the action."
+            } else {
+                match action {
+                    Some(Action::PowerLimit { .. }) => "Couldn’t verify the requested power limit.",
+                    Some(Action::ClockThrottle { .. }) => {
+                        "Couldn’t verify the requested clock restrictions."
+                    }
+                    None => "Couldn’t complete the protection action.",
+                }
+            };
+            (
+                "GPU protection action failed",
+                format!("{reason} See Pinwatch logs."),
+                3,
+            )
+        }
+        ("action_proposed", Some(Action::PowerLimit { target_w })) => (
+            "GPU power limit reduction",
+            e.previous_power_cap_w.map_or_else(
+                || format!("Would set the cap to {target_w:.0} W."),
+                |w| format!("Would reduce the cap from {w:.0} to {target_w:.0} W."),
+            ),
+            1,
         ),
         (
+            "action_proposed",
             Some(Action::ClockThrottle {
                 graphics_mhz,
                 memory_mhz,
             }),
-            Some(o),
-        ) => format!(
-            "Graphics {graphics_mhz} MHz setter acknowledged: {}; memory {memory_mhz} MHz setter acknowledged: {}. ",
-            o.graphics_locked, o.memory_locked
+        ) => (
+            "GPU clock restriction",
+            format!("Would cap graphics at {graphics_mhz} MHz and memory at {memory_mhz} MHz."),
+            1,
         ),
-        (Some(action), _) => format!("Requested/proposed: {action:?}. "),
-        _ => String::new(),
+        ("action_requested", _) if historical => (
+            "Previous GPU action unconfirmed",
+            "Check the current GPU settings.".into(),
+            3,
+        ),
+        _ => return None,
     };
-    let errors = e
-        .outcome
-        .as_ref()
-        .map(|o| o.errors.join("; "))
-        .unwrap_or_default();
+    let prefix = match (
+        e.simulation || e.kind == "action_proposed",
+        historical && e.kind != "action_requested",
+    ) {
+        (true, true) => "Simulation · Earlier · ",
+        (true, false) => "Simulation · ",
+        (false, true) => "Earlier · ",
+        (false, false) => "",
+    };
     Some(Notice {
         key: e.gpu_uuid.clone(),
         identity: e.event_id.clone(),
         incident: e.incident_id.clone(),
-        summary: format!(
-            "{}{}{}",
-            if e.simulation { "SIMULATION — " } else { "" },
-            if historical { "Historical — " } else { "" },
-            summary
-        ),
-        body: escape(&format!(
-            "{}: {trigger}{action}{} {errors}{}",
-            e.gpu_uuid,
-            e.detail,
-            if historical {
-                " Historical record; consult current telemetry. No power or clock restoration is implied."
-            } else {
-                ""
-            }
-        )),
-        urgency: if severity == 0 { 1 } else { 2 },
+        summary: format!("{prefix}{summary}"),
+        body: escape(&format!("{label} · {message}")),
+        urgency: 2,
         severity,
+        failure_detail: (e.kind == "action_failed").then(|| {
+            format!(
+                "{:?}: {} {:?}",
+                e.action,
+                e.detail,
+                e.outcome.as_ref().map(|o| &o.errors)
+            )
+        }),
     })
+}
+
+fn health_message(gpu: &GpuSnapshot) -> &'static str {
+    let reason = gpu.protection.reason.as_str();
+    if gpu.freshness == "stale" || reason.contains("sample became stale") {
+        "GPU readings are stale."
+    } else if gpu.reading.channels.is_none() {
+        "Connector readings are unavailable."
+    } else if gpu.reading.nvml_board_power_w.is_none() || gpu.reading.power_limit_w.is_none() {
+        "GPU power readings are unavailable."
+    } else if reason.contains("overload persists") {
+        "Current is still above the limit. See Pinwatch logs."
+    } else if reason.contains("clock fallback unavailable") {
+        "The required clock restrictions are unavailable. See Pinwatch logs."
+    } else if reason.contains("power constraints") {
+        "GPU power limit range is unavailable."
+    } else {
+        "Check Pinwatch logs for the cause."
+    }
 }
 #[derive(Default)]
 pub struct Manager {
@@ -126,16 +192,16 @@ impl Manager {
     }
     pub fn queue(&mut self, n: Notice, now: u64) {
         // New failures/escalations bypass rate limiting; repeated interventions within 30s coalesce.
-        let suppressed =
-            self.last_sent
-                .get(&n.key)
-                .is_some_and(|(at, severity, body, incident)| {
-                    n.severity != 0
-                        && n.incident == *incident
-                        && now.saturating_sub(*at) < 30000
-                        && n.severity <= *severity
-                        && (n.severity < 3 || n.body == *body)
-                });
+        let signature = n.failure_detail.as_ref().unwrap_or(&n.body);
+        let suppressed = self.last_sent.get(&n.key).is_some_and(
+            |(at, severity, previous_signature, incident)| {
+                n.severity != 0
+                    && n.incident == *incident
+                    && now.saturating_sub(*at) < 30000
+                    && n.severity <= *severity
+                    && (n.severity < 3 || signature == previous_signature)
+            },
+        );
         self.active.insert(n.key.clone(), n.clone());
         if !suppressed {
             self.pending.insert(n.key.clone(), n);
@@ -145,11 +211,25 @@ impl Manager {
         self.disconnected_since = None;
         if self.disconnect_announced {
             self.disconnect_announced = false;
-            self.queue(Notice { key:"daemon".into(),incident:"daemon".into(),identity:format!("reconnected:{now}"),summary:"GPU monitoring connection restored".into(),body:"Daemon connection restored; no power limits or clocks were restored. Check per-GPU protection state.".into(),urgency:1,severity:0 },now);
+            self.queue(
+                Notice {
+                    key: "daemon".into(),
+                    incident: "daemon".into(),
+                    identity: format!("reconnected:{now}"),
+                    summary: "Pinwatch reconnected".into(),
+                    body: "GPU monitoring connection restored. Existing limits remain in place."
+                        .into(),
+                    urgency: 1,
+                    severity: 0,
+                    failure_detail: None,
+                },
+                now,
+            );
         }
         let new_instance = self.instance.as_ref() != Some(&frame.daemon_instance);
         self.instance = Some(frame.daemon_instance.clone());
         let replay = reconciliation || new_instance;
+        let label = |gpu: &GpuSnapshot| gpu_label(&gpu.device, frame.gpus.len() > 1);
         if replay {
             // At most one relevant recent event per GPU, not a backlog of obsolete popups.
             for gpu in &frame.gpus {
@@ -175,7 +255,7 @@ impl Manager {
                 if let Some(e) = event
                     && self.remember(&e.event_id)
                     && e.kind != "protection_unavailable"
-                    && let Some(n) = map_event(e, true)
+                    && let Some(n) = map_event(e, true, &label(gpu))
                 {
                     self.queue(n, now);
                 }
@@ -188,9 +268,15 @@ impl Manager {
                 if self.remember(&e.event_id)
                     // Health notices follow current state, not obsolete event history.
                     && !matches!(e.kind.as_str(), "protection_unavailable" | "monitoring_recovered")
-                    && let Some(n) = map_event(e, false)
                 {
-                    self.queue(n, now);
+                    let device_label = frame
+                        .gpus
+                        .iter()
+                        .find(|gpu| gpu.device.gpu_uuid == e.gpu_uuid)
+                        .map_or_else(|| e.gpu_uuid.clone(), &label);
+                    if let Some(n) = map_event(e, false, &device_label) {
+                        self.queue(n, now);
+                    }
                 }
             }
         }
@@ -235,18 +321,18 @@ impl Manager {
                         identity: format!("health:{}:{fingerprint}", frame.daemon_instance),
                         summary: format!(
                             "{}GPU protection unavailable",
-                            if gpu.protection.mode == Mode::DryRun {
-                                "SIMULATION — "
+                            if gpu.protection.mode == Mode::DryRun
+                                || gpu.device.model.starts_with("SIMULATED ")
+                            {
+                                "Simulation · "
                             } else {
                                 ""
                             }
                         ),
-                        body: escape(&format!(
-                            "{}: {} ({}). Restrictions are not restored.",
-                            gpu.device.gpu_uuid, gpu.protection.reason, gpu.freshness
-                        )),
+                        body: escape(&format!("{} · {}", label(gpu), health_message(gpu))),
                         urgency: 2,
                         severity: 3,
+                        failure_detail: None,
                     },
                     now,
                 );
@@ -255,7 +341,22 @@ impl Manager {
                 && self.health_announced.remove(uuid)
                 && !self.pending.contains_key(&gpu.device.gpu_uuid)
             {
-                self.queue(Notice { key:gpu.device.gpu_uuid.clone(), incident:"recovery".into(), identity:format!("health-recovery:{now}"),summary:"GPU monitoring restored".into(),body:escape(&format!("{}: telemetry is available again. Power limits and clocks were not restored; check current protection state.",gpu.device.gpu_uuid)),urgency:1,severity:0 },now);
+                self.queue(
+                    Notice {
+                        key: gpu.device.gpu_uuid.clone(),
+                        incident: "recovery".into(),
+                        identity: format!("health-recovery:{now}"),
+                        summary: "GPU monitoring restored".into(),
+                        body: escape(&format!(
+                            "{} · Readings are back. Existing limits remain in place.",
+                            label(gpu)
+                        )),
+                        urgency: 1,
+                        severity: 0,
+                        failure_detail: None,
+                    },
+                    now,
+                );
             }
             if !unhealthy {
                 let restriction = frame
@@ -268,7 +369,7 @@ impl Manager {
                     })
                     .or(gpu.protection.historical_restriction.as_ref());
                 if let Some(event) = restriction
-                    && let Some(notice) = map_event(event, true)
+                    && let Some(notice) = map_event(event, true, &label(gpu))
                 {
                     self.active.insert(gpu.device.gpu_uuid.clone(), notice);
                 } else {
@@ -281,7 +382,19 @@ impl Manager {
         let since = *self.disconnected_since.get_or_insert(now);
         if now.saturating_sub(since) >= 5000 && !self.disconnect_announced {
             self.disconnect_announced = true;
-            self.queue(Notice { key:"daemon".into(),incident:"daemon".into(),identity:format!("disconnect:{since}"),summary:"GPU protection connection lost".into(),body:"Pinwatch daemon unavailable for at least 5 seconds. Protection cannot be verified; existing GPU restrictions are not restored.".into(),urgency:2,severity:3 },now);
+            self.queue(
+                Notice {
+                    key: "daemon".into(),
+                    incident: "daemon".into(),
+                    identity: format!("disconnect:{since}"),
+                    summary: "Pinwatch disconnected".into(),
+                    body: "GPU protection status is unknown.".into(),
+                    urgency: 2,
+                    severity: 3,
+                    failure_detail: None,
+                },
+                now,
+            );
         }
     }
     pub fn delivered(&mut self, key: &str, id: u32, now: u64) {
@@ -289,8 +402,15 @@ impl Manager {
             if n.severity == 3 {
                 self.health_announced.insert(key.into());
             }
-            self.last_sent
-                .insert(key.into(), (now, n.severity, n.body, n.incident));
+            self.last_sent.insert(
+                key.into(),
+                (
+                    now,
+                    n.severity,
+                    n.failure_detail.unwrap_or(n.body),
+                    n.incident,
+                ),
+            );
             self.replacements.insert(key.into(), id);
         }
     }
@@ -298,9 +418,7 @@ impl Manager {
         self.replacements.clear();
         for (key, n) in &self.active {
             if n.severity > 0 {
-                let mut n = n.clone();
-                n.summary = format!("Reconciled — {}", n.summary);
-                self.pending.insert(key.clone(), n);
+                self.pending.insert(key.clone(), n.clone());
             }
         }
     }
@@ -443,7 +561,21 @@ pub async fn run(socket: &Path, test: bool) -> Result<()> {
         "cannot own session notifier name; no session bus or another companion is running",
     )?;
     if test {
-        desktop.send(&Notice { key:"test".into(),incident:"test".into(),identity:"explicit-synthetic-test".into(), summary:"SIMULATION — Pinwatch notification test".into(),body:"Synthetic test via org.freedesktop.Notifications. No GPU was queried or changed.".into(),urgency:2,severity:1 },0).await?;
+        desktop
+            .send(
+                &Notice {
+                    key: "test".into(),
+                    incident: "test".into(),
+                    identity: "explicit-synthetic-test".into(),
+                    summary: "Pinwatch notification test".into(),
+                    body: "Test alert from Pinwatch.".into(),
+                    urgency: 2,
+                    severity: 1,
+                    failure_detail: None,
+                },
+                0,
+            )
+            .await?;
         return Ok(());
     }
     let start = Instant::now();

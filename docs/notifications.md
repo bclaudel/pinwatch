@@ -40,17 +40,18 @@ second invocation with `--test`. No shared privileged session selector is involv
 
 ## What is notified
 
-- Confirmed power reduction: critical urgency, GPU UUID, triggering channel/current,
-  threshold, previous cap, requested and confirmed cap.
-- Emergency clock restriction requested: critical urgency, both setter
-  acknowledgements, with observed response pending. `action_verified` can report
+- Confirmed power reduction: critical urgency, short GPU label, triggering channel/current,
+  threshold, and previous and confirmed cap. Full GPU identity, precise values,
+  and driver errors are available in the event log.
+- Emergency clock restriction requested: critical urgency, with observed response
+  pending. `action_verified` can report
   observed throttling after settling; unavailable/exceeded readback reports failure.
   A partial fallback is a failure notice, never a success.
 - Failed intervention, degraded/stale telemetry, or sustained daemon disconnection:
   critical urgency with a concise reason. Fresh `armed_unverified`/armed monitoring
   is normal before an intervention and does not generate a warning by itself.
   Historical failed or uncertain actions are still reconciled on connection.
-- Dry-run proposals: clearly labeled **SIMULATION**. Synthetic-backend applied
+- Dry-run proposals: clearly labeled **Simulation**. Synthetic-backend applied
   events are also simulations; they do not represent real GPU changes.
 - Monitoring recovery is announced only after a warning reached the notification
   server. Connection recovery: normal urgency, explicitly says no power caps
@@ -82,7 +83,8 @@ coalesced per GPU, not buffered unboundedly.
 
 On IPC connection/reconnection, current state selects at most one relevant latest
 event per GPU from the bounded ring, or a historical restriction record. Replayed
-records are labeled **Historical**, including uncertain pre-crash requests. A new
+actions are labeled **Earlier**. An uncertain pre-crash request is shown as
+**Previous GPU action unconfirmed**. A new
 daemon instance changes event identity; previous records are not mistaken for new
 hardware changes. Longer disconnects may omit intermediate events; journald remains
 the action record. A companion restart intentionally reconciles current state once
@@ -112,7 +114,7 @@ or change hardware:
 pinwatch notify --test
 ```
 
-The text starts `SIMULATION — Pinwatch notification test`. Routine `cargo test`
+The text starts `Pinwatch notification test`. Routine `cargo test`
 uses mock delivery sinks (and no desktop popups). Tests cover confirmed/failure
 mapping, markup escaping, duplicate frames, replacement, rate limiting, escalation,
 replay, daemon disconnect/recovery, notification-server restart, unavailable
