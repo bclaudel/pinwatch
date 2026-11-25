@@ -69,7 +69,11 @@ notification grace period. Recovered outages in the event history do not produce
 obsolete warnings or recovery popups. This delays only desktop health notices;
 monitoring, protection decisions, intervention failure notices, and journald events
 remain immediate. A pending health warning is discarded if telemetry recovers
-before delivery.
+before delivery. When systemd-logind announces sleep, the companion pauses
+telemetry and daemon connection warnings until wake. Their normal grace periods
+start again on wake. The companion uses the system bus for sleep signals and
+the session bus for desktop alerts. If logind is unavailable, the ordinary
+grace periods still apply.
 
 ## Deduplication, replacement, restart
 

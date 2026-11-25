@@ -1,6 +1,7 @@
 //! Unprivileged session companion. Notifications are never on the protection execution path.
 use crate::{config::Mode, ipc, model::*};
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -176,8 +177,28 @@ pub struct Manager {
     instance: Option<String>,
     unhealthy_since: HashMap<String, u64>,
     health_announced: HashSet<String>,
+    sleeping: bool,
 }
 impl Manager {
+    pub fn set_sleeping(&mut self, sleeping: bool) {
+        self.sleeping = sleeping;
+        self.unhealthy_since.clear();
+        self.disconnected_since = None;
+        self.pending.retain(|_, notice| notice.incident != "health");
+        self.active.retain(|key, notice| {
+            notice.incident != "health" || self.health_announced.contains(key)
+        });
+        if self
+            .pending
+            .get("daemon")
+            .is_some_and(|notice| notice.severity > 0)
+        {
+            self.pending.remove("daemon");
+            self.active.remove("daemon");
+            self.disconnect_announced = false;
+        }
+    }
+
     fn remember(&mut self, id: &str) -> bool {
         if !self.seen.insert(id.into()) {
             return false;
@@ -281,6 +302,9 @@ impl Manager {
             }
         }
         for gpu in &frame.gpus {
+            if self.sleeping {
+                continue;
+            }
             // Armed means active monitoring with no intervention yet. It is not
             // a failure; setter/readback failures arrive as events or degraded state.
             let unhealthy = gpu.freshness != "fresh" || gpu.protection.state == "degraded";
@@ -379,6 +403,9 @@ impl Manager {
         }
     }
     pub fn disconnected(&mut self, now: u64) {
+        if self.sleeping {
+            return;
+        }
         let since = *self.disconnected_since.get_or_insert(now);
         if now.saturating_sub(since) >= 5000 && !self.disconnect_announced {
             self.disconnect_announced = true;
@@ -417,7 +444,7 @@ impl Manager {
     pub fn server_restarted(&mut self) {
         self.replacements.clear();
         for (key, n) in &self.active {
-            if n.severity > 0 {
+            if n.severity > 0 && !(self.sleeping && (n.incident == "health" || key == "daemon")) {
                 self.pending.insert(key.clone(), n.clone());
             }
         }
@@ -549,6 +576,45 @@ pub async fn follow(socket: PathBuf, output: watch::Sender<ConnectionState>) {
         attempt = attempt.saturating_add(1);
     }
 }
+#[zbus::proxy(
+    interface = "org.freedesktop.login1.Manager",
+    default_service = "org.freedesktop.login1",
+    default_path = "/org/freedesktop/login1"
+)]
+trait LoginManager {
+    #[zbus(property)]
+    fn preparing_for_sleep(&self) -> zbus::Result<bool>;
+
+    #[zbus(signal)]
+    fn prepare_for_sleep(&self, sleeping: bool) -> zbus::Result<()>;
+}
+
+async fn sleep_signals(output: &watch::Sender<bool>) -> Result<()> {
+    let connection = zbus::Connection::system().await?;
+    let login = LoginManagerProxy::builder(&connection)
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await?;
+    let mut signals = login.receive_prepare_for_sleep().await?;
+    // Subscribe before reading the initial state so a transition is queued.
+    output.send_replace(login.preparing_for_sleep().await?);
+    while let Some(signal) = signals.next().await {
+        output.send_replace(*signal.args()?.sleeping());
+    }
+    anyhow::bail!("logind sleep signal stream closed")
+}
+
+async fn follow_sleep(output: watch::Sender<bool>) {
+    loop {
+        if let Err(error) = sleep_signals(&output).await {
+            eprintln!("notifier sleep tracking unavailable: {error}");
+            // Fall back to the ordinary health timer if logind is unavailable.
+            output.send_if_modified(std::mem::take);
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+
 struct AbortTransport(tokio::task::JoinHandle<()>);
 impl Drop for AbortTransport {
     fn drop(&mut self) {
@@ -582,6 +648,8 @@ pub async fn run(socket: &Path, test: bool) -> Result<()> {
     let mut manager = Manager::default();
     let (output, mut received) = watch::channel(ConnectionState::default());
     let _transport = AbortTransport(tokio::spawn(follow(socket.into(), output)));
+    let (sleep_output, mut sleep_state) = watch::channel(false);
+    let _sleep = AbortTransport(tokio::spawn(follow_sleep(sleep_output)));
     let mut generation = 0;
     let mut delivery_attempt: u32 = 0;
     let mut delivery_at = 0;
@@ -591,6 +659,12 @@ pub async fn run(socket: &Path, test: bool) -> Result<()> {
         tokio::select! {
             _ = tick.tick() => {},
             changed = received.changed() => { changed.context("notifier transport stopped")?; },
+            Ok(()) = sleep_state.changed() => {
+                manager.set_sleeping(*sleep_state.borrow_and_update());
+            }
+        }
+        if sleep_state.has_changed().unwrap_or(false) {
+            manager.set_sleeping(*sleep_state.borrow_and_update());
         }
         let now = start.elapsed().as_millis() as u64;
         let state = received.borrow_and_update().clone();

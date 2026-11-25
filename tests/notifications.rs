@@ -409,3 +409,58 @@ fn intervention_failure_bypasses_health_grace() {
             .contains("protection action failed")
     );
 }
+
+#[test]
+fn sleep_defers_health_warnings_but_not_action_failures() {
+    let mut m = Manager::default();
+    let degraded = frame(vec![], "degraded");
+    m.ingest(&degraded, 0, true);
+    m.ingest(&degraded, 3000, false);
+    assert!(m.pending.contains_key("GPU-TEST"));
+
+    m.set_sleeping(true);
+    m.ingest(&degraded, 7000, false);
+    m.server_restarted();
+    assert!(m.pending.is_empty());
+
+    m.ingest(
+        &frame(vec![event("action_failed", 1)], "degraded"),
+        7100,
+        false,
+    );
+    assert_eq!(
+        m.pending["GPU-TEST"].summary,
+        "GPU protection action failed"
+    );
+    m.delivered("GPU-TEST", 42, 7200);
+
+    let healthy = frame(vec![], "armed_unverified");
+    m.set_sleeping(false);
+    m.ingest(&healthy, 9000, false);
+    assert_eq!(m.pending["GPU-TEST"].summary, "GPU monitoring restored");
+    m.delivered("GPU-TEST", 42, 9000);
+
+    m.set_sleeping(true);
+    m.ingest(&degraded, 9500, false);
+    m.set_sleeping(false);
+    m.ingest(&degraded, 10000, false);
+    m.ingest(&degraded, 12999, false);
+    assert!(m.pending.is_empty());
+    m.ingest(&degraded, 13000, false);
+    assert_eq!(m.pending["GPU-TEST"].summary, "GPU protection unavailable");
+}
+
+#[test]
+fn sleep_restarts_the_daemon_disconnect_timer() {
+    let mut m = Manager::default();
+    m.disconnected(0);
+    m.set_sleeping(true);
+    m.disconnected(10000);
+    assert!(m.pending.is_empty());
+    m.set_sleeping(false);
+    m.disconnected(11000);
+    m.disconnected(15999);
+    assert!(m.pending.is_empty());
+    m.disconnected(16000);
+    assert_eq!(m.pending["daemon"].summary, "Pinwatch disconnected");
+}

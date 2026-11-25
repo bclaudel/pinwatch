@@ -546,6 +546,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fs2",
+ "futures-util",
  "i2cdev",
  "nvml-wrapper",
  "serde",
